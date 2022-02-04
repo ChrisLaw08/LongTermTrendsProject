@@ -1,7 +1,5 @@
-#install.packages("ggedit")
-library(extrafont)
+#Packages needed to run code ####
 library(gridExtra)
-library(tidymodels)
 library(tidyverse)
 library(latex2exp)
 library(gridExtra)
@@ -10,47 +8,55 @@ library(gtsummary)
 library(deming)
 library(Kendall)
 library(scales)
+library(rstatix)
 library(patchwork)
-library(zyp)
-library(car)
-library(vip)
+library(IgorR)
+library(vroom)
+library(tibbletime)
+library(lubridate)
 
-##
+##To Show available colors
 show_col(hue_pal()(6))
 colsgg<-(hue_pal()(6))
 
 ### Data Clean Up ####
-AllCloudData<-read.csv("Alldata.csv", header = TRUE)
+AllCloudData<-read.csv("AllCloudandMetData.csv", header = TRUE)
 
 PaperQuality<-function(...){
   theme_bw()%+replace%
-    theme(axis.title.x = element_text(size = 17), axis.title.y = element_text(size = 17, angle = 90),
-          axis.text = element_text(size = 17), title = element_text(size = 17, face = "bold"),
+    theme(axis.title.x = element_text(size = 18), axis.title.y = element_text(size = 18, angle = 90),
+          axis.text = element_text(size = 20), title = element_text(size = 20, face = "bold"),
           legend.text = element_text(size = 15), legend.title = element_blank(),
           legend.position = "bottom")
 }
 
 AllCloudData<-AllCloudData%>%
-  dplyr::rename(TOC = WSOC)%>%
-  filter(Year > 1993 & Year<2021)%>%
-  mutate(date = as.POSIXct(date, format = "%m/%d/%Y %H:%M"))%>%
-#  mutate(TOCCorrected = case_when(Year == 2018 | Year == 2019 ~ TOC*(1/.8486), 
- #                                 TRUE~TOC))%>%
+  dplyr::mutate(TOC = WSOC)%>%
+  filter(Year > 1993 & Year<=2021)%>%
+  mutate(date = as.POSIXct(date))%>%
+  mutate(TOC = case_when(Year > 2017 ~ TOC*(1/.8486), 
+                                  TRUE~TOC))%>%
   mutate(Cations = 1e6*10^(-LABPH)+CA+MG+K+Sodium+NH4,
-         Anions = NO3+SO4+CL)%>%### Create Columns with Cations and Anions ueq/L
-  mutate(RPD = 200*(Cations-Anions)/(Cations+Anions))%>% ## RPD Calculations
+         Anions = NO3+SO4+CL,
+         CatAnRat = Cations/Anions)%>%### Create Columns with Cations and Anions ueq/L
+  mutate(RPD = 200*(Cations-Anions)/(Cations+Anions),
+         Hplus = 1e6*10^(-LABPH))%>% ## RPD Calculations
   mutate(Ratio = Cations/Anions)%>%
-  mutate(HCond = (Hplus*349.5)/1000, Regime = ifelse(HCond/SPCOND < 0.35, "Non-Linear", "Linear"))%>%
+  mutate(HCond = (Hplus*349.5)/1000, Regime = ifelse(HCond/SPCOND < 0.35, "Non-Linear", "Linear"),
+         PredCond = (Hplus*349.5 + Sodium*50.1+73.5*K+73.5*NH4+59.5*CA+53.5*MG+80*SO4+76.35*CL+71.46*NO3)/1000)%>%
   mutate(Class = ifelse((Cations < 100 & Anions < 100 & abs(RPD) < 100) | (Cations > 100 & abs(RPD) < 25) |(Anions > 100 & abs(RPD)<25), "Valid", "Invalid"))%>%
   mutate(Class = as.factor(Class))%>%
   mutate(Hplus = 10^(-LABPH))%>%
   mutate(SurplusNH4 = NH4-NO3-SO4)%>%
-  mutate(HCO3Gas = (3.4*10^(-2)*410*10^(-6)*10^(-6.36))/Hplus)%>%##Gas phase HCO3
-  mutate(HCO3Fraction = (Hplus*10^(-6.3))/(Hplus^2 + Hplus*10^(-6.36) + 10^(-6.36-10.36)))%>%##Ionizations Fraction of HCO3
-  mutate(HCO3Total = (HCO3Fraction*(MG+CA)/2) + 1e6*HCO3Gas,
-         pHBin = cut(LABPH, 6))%>%
+  mutate(HCO3Gas = 1e6*(3.4*10^(-2)*410*10^(-6)*10^(-6.36))/Hplus)%>%##Gas phase HCO3
+  #mutate(HCO3Fraction = (Hplus*10^(-6.3))/(Hplus^2 + Hplus*10^(-6.36) + 10^(-6.36-10.36)))%>%##Ionizations Fraction of HCO3
+  #mutate(HCO3Total = (HCO3Fraction*(MG+CA)/2) + 1e6*HCO3Gas,
+  mutate(pHBin = cut(LABPH, 6))%>%
   mutate(IonBalance = Cations-Anions,
-         IonBalanceHCO3 = Cations - Anions -HCO3Total)
+         IonBalanceHCO3 = Cations - Anions -HCO3Gas,
+         InferredpH = -log10(10^(-LABPH)+(CA+MG)/1e6),
+         InferredBin = cut(InferredpH, breaks = seq (2, 5, .5)),
+         LWC = ifelse(is.na(LWC), LWCNew, LWC))
 
 ### Create Median Trends Separated by Valid and All Data ####
 
@@ -75,6 +81,7 @@ names(AllMedians)<-gsub(".1", "Valid", x = names(AllMedians))
 AllMedians<-cbind(AllMedians, InvalidMedians)
 names(AllMedians)<-make.unique(names(AllMedians))
 names(AllMedians)<-gsub(".1", "Invalid", x = names(AllMedians))
+
 
 
 ## Run the Sen Slope Functions for Valid and Total Data Sets and Create Datatables####
@@ -109,8 +116,8 @@ TheilSenFunction<-function(df, analytes ,fun){
   SenDF<-tibble(Analyte = unlist(analytes), Slope = unlist(SenSlope), Intercept =unlist(SenInter) , `P-Value` = unlist(Ken))
   SenDF<-SenDF%>%
     mutate(`P-Value` = scientific(`P-Value`, digits = 3),
-           Slope = round(Slope, digits = 2),
-           Intercept = round(Intercept, digits = 3))
+           Slope = round(Slope, digits = 4),
+           Intercept = round(Intercept, digits = 4))
   return(SenDF)
   }
 
@@ -125,7 +132,7 @@ AllSlope$Analyte<-c("pH", "Conductivity", "SO4", "NO3", "NH4", "TOC", "Ca", "Mg"
 ValidSlopeNoInter<-ValidSlope%>%
   select(-Intercept)
 ValidSlopeTable<-ggtexttable(ValidSlopeNoInter, theme = ttheme("light", base_size = 16, colnames.style = colnames_style(face = "italic", size = 16)), rows = NULL)%>%
-  tab_add_title(text = paste("Theil-Sen Slope and",
+  tab_add_title(text = paste("d)","Theil-Sen Slope and",
                               "Mann Kendall P-Value", sep = "\n"), size = 17, face = "bold",padding = unit(1, "line"),
                 just = "left")
 
@@ -133,15 +140,13 @@ AllSlopeNoInter<-AllSlope%>%
   select(-Intercept)%>%
   filter(Analyte != "Ratio")
 AllSlopeTable<-ggtexttable(AllSlopeNoInter, theme = ttheme("light", base_size = 16, colnames.style = colnames_style(face = "italic", size = 16)), rows = NULL)%>%
-  tab_add_title(text = paste("Theil-Sen Slope and",
+  tab_add_title(text = paste("d)","Theil-Sen Slope and",
                              "Mann Kendall P-Value", sep = "\n"), size = 17, face = "bold",padding = unit(1, "line"),
                 just = "left")
 
 
 
-## Figure 2 Valid Plots ####
-
-
+## Figure 3 Valid Plots ####
 
 ValidpHPlot<-ggplot(ValidMedians)+
   geom_line(aes(x = Year, y = LABPH), color = "purple",size = 4)+
@@ -154,7 +159,8 @@ ValidpHPlot<-ggplot(ValidMedians)+
   theme(legend.position = "none")+
   annotate(geom = 'text',x = 2008, y = 5, size = 6,
            label = paste("y=",signif(ValidSlope$Slope[ValidSlope$Analyte=="pH"][[1]],digits = 3),"x +", signif(ValidSlope$Intercept[ValidSlope$Analyte=="pH"][[1]],digits = 3)), color = "purple")+
-  ggtitle("pH")
+  labs(title = TeX('\\textbf{b)}'),
+       subtitle = TeX("\\textbf{pH}"))
 
 
 ValidConductivityPlot<-ggplot(ValidMedians)+
@@ -167,7 +173,8 @@ ValidConductivityPlot<-ggplot(ValidMedians)+
   annotate(geom = 'text',x = 2010, y = 90, size = 6,
            label = paste("y=",signif(ValidSlope$Slope[ValidSlope$Analyte=="Conductivity"][[1]],digits = 3),"x +", 
                          signif(ValidSlope$Intercept[ValidSlope$Analyte=="Conductivity"][[1]], digits = 3)), color = "black")+
-  ggtitle("Conductivity")
+  labs(title = TeX('\\textbf{c)}'),
+       subtitle = TeX("\\textbf{Conductivity}"))
 
 ValidConcPlots<-ggplot(ValidMedians)+
   geom_line(aes(x = Year, y = SO4), color = "red",size = 4)+
@@ -200,18 +207,18 @@ ValidConcPlots<-ggplot(ValidMedians)+
   annotate(geom = 'text',x = 2012, y = 125, size = 6,
            label = paste("y=",signif(ValidSlope$Slope[ValidSlope$Analyte=="TOC"][[1]],digits = 3),"x +", 
                          signif(ValidSlope$Intercept[ValidSlope$Analyte=="TOC"][[1]], digits = 3)), color = "forest green")+
-  ggtitle("Major Analytes")
+  labs(title = TeX('\\textbf{a)}'),
+       subtitle = TeX("\\textbf{Major Analytes}"))
+ 
 
  
 ValidPlots<-ggarrange(ValidConcPlots,ValidpHPlot, ValidConductivityPlot, ValidSlopeTable, nrow = 2, ncol = 2)
 
 
-ggsave(ValidPlots, filename = "ValidPlots.png",width = 14, height = 10)
+ggsave(ValidPlots, filename = "Figure3.png",width = 14, height = 10)
 
 
-
-
-## Figure 3 Percent Valid Plots ####
+## Figure 4 Percent Valid Plots ####
 
 # Create Precent Valid and Invalid
 Percent<-AllCloudData%>%
@@ -225,13 +232,108 @@ Percent<-Percent[seq(1, nrow(Percent), by =2),] ##Filters out data to only look 
 
 
 PercentPlot<-ggplot(Percent)+
-  geom_line(aes(Year, y = Percent), color = 'red', size = 2)+
+  geom_line(aes(Year, y = Percent), color = 'red', size = 4)+
   geom_point(aes(Year, y = Percent), fill = "red", shape = 21, size = 4)+
-  PaperQuality()+scale_y_continuous(TeX('\\textbf{Percent Invalid (%)}'))+scale_x_continuous(breaks = seq(1994, 2017, 4))
+  PaperQuality()+scale_y_continuous(TeX('\\textbf{Percent Invalid (%)}'))+scale_x_continuous(breaks = seq(1994, 2022, 4))
 
-ggsave(PercentPlot, filename = "PercentPlot.png", width =5, height = 5)
+ggsave(PercentPlot, filename = "Figure4.png", width =6, height = 5)
 
-##Figure 4 Comparing Valid and Invalid Medians####
+## Figure S1 TOC vs WSOC ####
+
+TOCWSOC<-read.csv("TOCvsWSOC.csv", header = TRUE)
+
+TOCWSOCPlot<-ggplot(TOCWSOC)+
+  geom_point(aes(x = TOC, y = WSOC), color = 'forest green', size = 3)+
+  geom_smooth(aes(x = TOC, y= WSOC), formula = y~x, method = lm)+
+  PaperQuality()+
+  stat_regline_equation(aes(x = TOC, y = WSOC,
+                            label = paste(..eq.label.., ..rr.label.., 
+                                          sep = "~~~~")))+
+  labs(x = TeX("\\textbf{TOC ($\\mu$molC L^{-1})}"),
+       y = TeX("\\textbf{WSOC ($\\mu$molC L^{-1})}"))
+ggsave(TOCWSOCPlot, filename = "FigureS1.png", width =8, height = 8)
+
+
+## Figure S2 Minute vs Hourly Liquid Water Content ####
+
+Minute2016Data<-vroom("15-05-2016 - 30-09-2016.csv", col_names = TRUE, skip = 1, guess_max = 1e4,
+                      delim = ",") ### Read in the data
+
+Minute2016Data[Minute2016Data==-9999.000]<-NA
+Minute2016Data<-na.omit(Minute2016Data)
+
+ChrisCloudData2016<-Minute2016Data%>%
+  mutate(date = as.POSIXct(paste0(Date, Time), format = "%d/%m/%Y %H:%M:%S"))%>%
+  # mutate(LWCChris = `LWC : Value`)%>%
+  mutate(LWCChris = ifelse(`CONFIRM : Value` >= 0.4 & `LWC : Value` >= 0.05, `LWC : Value`, NA))%>% 
+  as_tbl_time(., index = date)%>%
+  collapse_by("12 hourly", start_date =as.POSIXct("2016-05-27 18:00:00"))%>%
+  group_by(date)%>%
+  summarise(across(where(is.numeric), mean, na.rm =TRUE))%>%
+  mutate(date = date+minutes(1), date = as.character(date))%>%
+  as.data.frame(.)
+
+ALSC2016DataFiltered<-vroom("WFC12HourMet.csv", col_names = TRUE)%>%
+  filter(Year ==2016)%>%
+  mutate(date = as.POSIXct(date, format = "%m/%d/%Y %H:%M"))%>%
+  as_tbl_time(. , index =date)%>%
+  mutate(LWCALSC = LWC)%>%
+  mutate(LWCALSC = ifelse(RainCount/60 < .25 & CloudCount/60 >= .25 & LWC >=0.05, LWC, NA))%>%
+  collapse_by("12 hourly", start_date = as.POSIXct("2016-05-27 18:00:00"))%>%
+  group_by(date)%>%
+  summarise(across(where(is.numeric), mean, na.rm=TRUE))%>%
+  mutate(date = date+hours(1), date = as.character(date))%>%
+  as.data.frame(.)
+
+ALSC2016DataNotFiltered<-vroom("WFC12HourMet.csv", col_names = TRUE)%>%
+  filter(Year ==2016)%>%
+  mutate(date = as.POSIXct(date, format = "%m/%d/%Y %H:%M"))%>%
+  as_tbl_time(. , index =date)%>%
+  mutate(LWCALSC = LWC)%>%
+  mutate(LWCALSC = ifelse(LWC >= 0.05, LWC, NA))%>%
+  collapse_by("12 hourly", start_date = as.POSIXct("2016-05-27 18:00:00"))%>%
+  group_by(date)%>%
+  summarise(across(where(is.numeric), mean, na.rm=TRUE))%>%
+  mutate(date = date+hours(1), date = as.character(date))%>%
+  as.data.frame(.)
+
+
+
+AllLWCData2016Filtered<-merge(ChrisCloudData2016, ALSC2016DataFiltered)  
+AllLWCData2016NotFiltered<-merge(ChrisCloudData2016, ALSC2016DataNotFiltered)  
+
+
+LWCPlot<-ggplot(AllLWCData2016Filtered)+
+  geom_jitter(aes(x = LWCChris, y= LWCALSC, fill = 'Including Deployment and Rain Detection'), shape = 21, 
+              color = 'black', size = 3)+
+  geom_jitter(aes(x = LWCChris, y = LWCALSC, fill = 'LWC >= 0.05 Only'),
+              color = 'black', size =3, data = AllLWCData2016NotFiltered, shape =21)+
+  
+  geom_smooth(aes(x = LWCChris, y= LWCALSC, color = 'Including Deployment and Rain Detection'), size = 2, method =lm, formula = y~x+0,
+              show.legend = FALSE)+
+  geom_smooth(aes(x = LWCChris, y = LWCALSC, color = 'LWC >= 0.05 Only'), size =2, data = AllLWCData2016NotFiltered,
+              method =lm, formula = y~x+0,
+              show.legend = FALSE)+
+  stat_regline_equation(aes(x = LWCChris, y= LWCALSC, color = 'Including Deployment and Rain Detection',
+                            label = paste(..eq.label.., ..rr.label.., sep = "~~~~")),
+                        formula = y~x+0,
+                        size = 4, show.legend = FALSE)+
+  
+  stat_regline_equation(aes(x = LWCChris, y= LWCALSC, color = 'LWC >= 0.05 Only',
+                            label = paste(..eq.label.., ..rr.label.., sep = "~~~~")),
+                        data = AllLWCData2016NotFiltered,
+                        label.y.npc = 0.9, formula = y~x+0,
+                        size = 4,
+                        show.legend = FALSE)+
+  theme(axis.title.x = element_text(size = 16),
+        axis.title.y = element_text(size = 16))+
+  PaperQuality()+geom_abline(slope = 1, intercept = 0, linetype = 'dashed',
+                             size = 2)+
+  labs(x = TeX("\\textbf{LWC from 1-Minute Resolution Data (g m^{-3})}"), y = TeX("\\textbf{LWC from ALSC 1-Hour Resolution Data (g m^{-3})}"))
+
+ggsave(LWCPlot, filename = 'FigureS2.png', height =8, width = 8)
+
+## Figure S3 Comparing Valid and Invalid Medians####
 
 ValidInvalidpH<-ggplot(AllMedians)+
   geom_line(aes(x = Year, y = LABPHInvalid), color = '#F8766D',size = 4)+
@@ -242,7 +344,7 @@ ValidInvalidpH<-ggplot(AllMedians)+
   PaperQuality()+theme(axis.text.y.right = element_text(color = "forest green"), axis.ticks = element_line(color = "forest green"), 
                        axis.title.y.left = element_text(margin = margin(t = 0, r = 15, b = 0, l = 0)))+
   ggtitle("pH")+
-  ylab("pH")+scale_x_continuous(breaks = seq(1994, 2018, by = 4))
+  ylab("pH")+scale_x_continuous(breaks = seq(1994, 2022, by = 4))
 
 ValidInvalidCond<-ggplot(AllMedians)+
   geom_line(aes(x = Year, y = SPCONDInvalid), color = '#F8766D',size = 4)+
@@ -250,7 +352,7 @@ ValidInvalidCond<-ggplot(AllMedians)+
   geom_line(aes(x = Year, y = SPCONDValid),color ='#00BFC4' ,size = 4)+
   geom_point(aes(x = Year, y = SPCONDValid, fill = "Valid"),color = 'black', size = 4, shape = 21)+
   PaperQuality()+
-  ylab(TeX("\\textbf{Conductivity ($\\mu S $ cm^{-1}$)}"))+scale_x_continuous(breaks = seq(1994, 2017, by = 4))+
+  ylab(TeX("\\textbf{Conductivity ($\\mu S $ cm^{-1}$)}"))+scale_x_continuous(breaks = seq(1994, 2022, by = 4))+
   ggtitle("Conductivity")
 
 ValidInvalidSO4<-ggplot(AllMedians)+
@@ -259,7 +361,7 @@ ValidInvalidSO4<-ggplot(AllMedians)+
   geom_line(aes(x = Year, y = SO4Valid),color ='#00BFC4' ,size = 4)+
   geom_point(aes(x = Year, y = SO4Valid, fill = "Valid"),color = 'black', size = 4, shape = 21)+
   PaperQuality()+
-  ylab(TeX("\\textbf{SO_4^{-2} ($\\mu eq $ L^{-1}$)}"))+scale_x_continuous(breaks = seq(1994, 2017, by = 4))+
+  ylab(TeX("\\textbf{SO_4^{-2} ($\\mu eq $ L^{-1}$)}"))+scale_x_continuous(breaks = seq(1994, 2022, by = 4))+
   ggtitle(TeX("\\textbf{SO_4^{ 2-}}"))
 
 ValidInvalidNH4<-ggplot(AllMedians)+
@@ -268,7 +370,7 @@ ValidInvalidNH4<-ggplot(AllMedians)+
   geom_line(aes(x = Year, y = NH4Valid),color ='#00BFC4' ,size = 4)+
   geom_point(aes(x = Year, y = NH4Valid, fill = "Valid"),color = 'black', size = 4, shape = 21)+
   PaperQuality()+
-  ylab(TeX("\\textbf{NH_4^{ +} ($\\mu eq $ L^{-1}$)}"))+scale_x_continuous(breaks = seq(1994, 2017, by = 4))+
+  ylab(TeX("\\textbf{NH_4^{ +} ($\\mu eq $ L^{-1}$)}"))+scale_x_continuous(breaks = seq(1994, 2022, by = 4))+
   ggtitle(TeX("\\textbf{NH_4^{ +}}"))
 
 ValidInvalidNO3<-ggplot(AllMedians)+
@@ -277,7 +379,7 @@ ValidInvalidNO3<-ggplot(AllMedians)+
   geom_line(aes(x = Year, y = NO3Valid),color ='#00BFC4' ,size = 4)+
   geom_point(aes(x = Year, y = NO3Valid, fill = "Valid"),color = 'black', size = 4, shape = 21)+
   PaperQuality()+
-  ylab(TeX("\\textbf{NO_3^{ -} ($\\mu eq $ L^{-1}$)}"))+scale_x_continuous(breaks = seq(1994, 2017, by = 4))+
+  ylab(TeX("\\textbf{NO_3^{ -} ($\\mu eq $ L^{-1}$)}"))+scale_x_continuous(breaks = seq(1994, 2022, by = 4))+
   ggtitle(TeX("\\textbf{NO_3^{ -}}"))
 
 ValidInvalidTOC<-ggplot(AllMedians)+
@@ -286,7 +388,7 @@ ValidInvalidTOC<-ggplot(AllMedians)+
   geom_line(aes(x = Year, y = TOCValid),color ='#00BFC4' ,size = 4)+
   geom_point(aes(x = Year, y = TOCValid, fill = "Valid"),color = 'black', size = 4, shape = 21)+
   PaperQuality()+
-  ylab(TeX("\\textbf{TOC ($\\mu mol $ L^{-1}$)}"))+scale_x_continuous(breaks = seq(2008, 2018, by = 2), limits = c(2009,2018))+
+  ylab(TeX("\\textbf{TOC ($\\mu mol $ L^{-1}$)}"))+scale_x_continuous(breaks = seq(2008, 2022, by = 2), limits = c(2009,2022))+
   ggtitle(TeX("\\textbf{TOC"))
 
 ValidInvalidCA<-ggplot(AllMedians)+
@@ -295,7 +397,7 @@ ValidInvalidCA<-ggplot(AllMedians)+
   geom_line(aes(x = Year, y = CAValid),color ='#00BFC4' ,size = 4)+
   geom_point(aes(x = Year, y = CAValid, fill = "Valid"),color = 'black', size = 4, shape = 21)+
   PaperQuality()+
-  ylab(TeX("\\textbf{Ca^{2+} ($\\mu eq $ L^{-1}$)}"))+scale_x_continuous(breaks = seq(1994, 2018, by = 4), limits = c(1994,2018))+
+  ylab(TeX("\\textbf{Ca^{2+} ($\\mu eq $ L^{-1}$)}"))+scale_x_continuous(breaks = seq(1994, 2022, by = 4), limits = c(1994,2022))+
   ggtitle(TeX("\\textbf{Ca^{2+}}"))
 
 
@@ -305,7 +407,7 @@ ValidInvalidK<-ggplot(AllMedians)+
   geom_line(aes(x = Year, y = KValid),color ='#00BFC4' ,size = 4)+
   geom_point(aes(x = Year, y = KValid, fill = "Valid"),color = 'black', size = 4, shape = 21)+
   PaperQuality()+
-  ylab(TeX("\\textbf{K^{+} ($\\mu eq $ L^{-1}$)}"))+scale_x_continuous(breaks = seq(1994, 2018, by = 4), limits = c(1994,2018))+
+  ylab(TeX("\\textbf{K^{+} ($\\mu eq $ L^{-1}$)}"))+scale_x_continuous(breaks = seq(1994, 2022, by = 4), limits = c(1994,2022))+
   ggtitle(TeX("\\textbf{K^{+}}"))
 
 
@@ -316,7 +418,7 @@ ValidInvalidLWC<-ggplot(AllMedians)+
   geom_line(aes(x = Year, y = LWCValid),color ='#00BFC4' ,size = 4)+
   geom_point(aes(x = Year, y = LWCValid, fill = "Valid"),color = 'black', size = 4, shape = 21)+
   PaperQuality()+
-  ylab(TeX("\\textbf{LWC (g m^{-3}$)}"))+scale_x_continuous(breaks = seq(1994, 2018, by = 4), limits = c(1994,2018))+
+  ylab(TeX("\\textbf{LWC (g m^{-3}$)}"))+scale_x_continuous(breaks = seq(1994, 2022, by = 4), limits = c(1994,2022))+
   ggtitle(TeX("\\textbf{LWC}"))
 
 
@@ -325,7 +427,7 @@ ValidInvalidLWC<-ggplot(AllMedians)+
 ValidInvalidAll<-ValidInvalidpH+ValidInvalidCond+ValidInvalidSO4+ValidInvalidNH4+ValidInvalidNO3+ValidInvalidTOC+
   ValidInvalidCA+ValidInvalidK+ValidInvalidLWC&theme(legend.position = "bottom")
 ValidInvalidAll<-ValidInvalidAll+plot_layout(guides = "collect")
-ggsave(filename = "ValidInvalidAll.png", ValidInvalidAll,height = 10,width = 16)
+ggsave(filename = "FigureS3.png", ValidInvalidAll,height = 10,width = 20)
 
 ## Figure 5 Complete Dataset Trends####
 AllpHPlot<-ggplot(AllMedians)+
@@ -337,9 +439,11 @@ AllpHPlot<-ggplot(AllMedians)+
                        axis.title.y.left = element_text(margin = margin(t = 0, r = 15, b = 0, l = 0)), legend.position = "none")+
   ylab("pH")+scale_x_continuous(breaks = seq(1994, 2018, by = 4))+
   annotate(geom = 'text',x = 2010, y = 5, size = 6,
-           label = paste("y=",signif(AllSlope$Slope[AllSlope$Analyte=="pH"][[1]],digits = 3),"x +", 
+           label = paste("y=",round(AllSlope$Slope[AllSlope$Analyte=="pH"][[1]],digits = 4),"x +", 
                          signif(AllSlope$Intercept[AllSlope$Analyte=="pH"][[1]], digits = 3)), color = "purple")+
-  ggtitle("pH")
+  labs(title = TeX('\\textbf{b)}'),
+       subtitle = TeX("\\textbf{pH}"))
+
 
 
 
@@ -353,7 +457,9 @@ AllConductivityPlot<-ggplot(AllMedians)+
   annotate(geom = 'text',x = 2010, y = 60, size = 6,
            label = paste("y=",signif(AllSlope$Slope[AllSlope$Analyte=="Conductivity"][[1]],digits = 3),"x +", 
                          signif(AllSlope$Intercept[AllSlope$Analyte=="Conductivity"][[1]], digits = 3)), color = "black")+
-  ggtitle("Conductivity")+theme(legend.position = 'none')
+  labs(title = TeX('\\textbf{c)}'),
+       subtitle = TeX("\\textbf{Conductivity}"))
+
 
 AllConcPlots<-ggplot(AllMedians)+
   geom_line(aes(x = Year, y = SO4), color = "red",size = 4)+
@@ -368,7 +474,7 @@ AllConcPlots<-ggplot(AllMedians)+
   geom_line(aes(x = Year, y = TOC/4),color = "forest green",size = 4)+
   geom_point(aes(x = Year, y = TOC/4, fill = "TOC"), size = 4, shape =21)+
   geom_smooth(aes(x = Year, y = TOC/4, color = "TOC"), method = sen, size = 2, se = FALSE)+
-  scale_x_continuous(breaks = seq(1994, 2018, by = 4))+scale_y_continuous(guide = guide_axis(check.overlap = TRUE),sec.axis = sec_axis(trans = ~.x*4, name = TeX("\\textbf{TOC Concentration ($\\mu molC $ L^{-1}$)}")),
+  scale_x_continuous(breaks = seq(1994, 2022, by = 4))+scale_y_continuous(guide = guide_axis(check.overlap = TRUE),sec.axis = sec_axis(trans = ~.x*4, name = TeX("\\textbf{TOC Concentration ($\\mu molC $ L^{-1}$)}")),
                                                                           name =TeX("\\textbf{$Ion Concentration$ ($\\mu eq $ L^{-1}$)}"))+
   scale_fill_manual(values = c("SO4" = "red", "NO3" = "blue", "NH4" = 'orange', "TOC" = "forest green"))+
   scale_color_manual(values = c("SO4" = "red", "NO3" = "blue", "NH4" = 'orange', "TOC" = "forest green"), guide = FALSE)+
@@ -386,15 +492,17 @@ AllConcPlots<-ggplot(AllMedians)+
   annotate(geom = 'text',x = 2010, y = 125, size = 6,
            label = paste("y=",signif(AllSlope$Slope[AllSlope$Analyte=="TOC"][[1]],digits = 3),"x +", 
                          signif(AllSlope$Intercept[AllSlope$Analyte=="TOC"][[1]], digits = 3)), color = "forest green")+
-  ggtitle("Major Analytes")
+  labs(title = TeX('\\textbf{a)}'),
+       subtitle = TeX("\\textbf{Major Analytes}"))
+
 
 
 AllPlots<-ggarrange(AllConcPlots,AllpHPlot, AllConductivityPlot, AllSlopeTable, nrow = 2, ncol = 2)
 
-ggsave(AllPlots, filename = "AllPlots.png",width = 14, height = 10)
+ggsave(plot=AllPlots, filename = "Figure5.png",width = 14, height = 10)
 
-## Figure 6 Surplus NH4 and Cation/Anion Ratio #### 
-SurplusNH4<-ggplot(data = subset(AllCloudData, Year < 2018))+
+## Figure 6 NH4 Neutralization and Cation/Anion Ratio #### 
+SurplusNH4<-ggplot(data = subset(AllCloudData))+
   #  stat_summary(aes(x = Year, group = Year, y =LABPH), fun.data = median_IQR,
   # size = 1 ,color = "black")+
   stat_summary(aes(x = Year, y = 1e6*10^(-LABPH)), fun.y = "median",
@@ -408,22 +516,21 @@ SurplusNH4<-ggplot(data = subset(AllCloudData, Year < 2018))+
   geom_hline(yintercept = 0, size =3)+
   theme_bw()+theme(axis.text.y = element_text(size = 18),axis.text.x = element_text(size = 18),axis.title = element_text(size = 16, face = "bold"))+
   theme(panel.border = element_blank(), axis.line = element_line(colour = "black"), title = element_text(face = "bold", size = 18))+
-  scale_y_continuous(name = TeX("\\textbf{Concentrations ($\\mu eq $L^{-1}$)}"))+scale_x_continuous(breaks = seq(1994,2017,4))+
-  ggtitle('H+ and Surplus NH4')+
-  annotate(x = 2010, y = -75, geom = "text", label = TeX("\\textbf{NH_4^+ - SO_4^{-2} - NO_3^-}"), color = "blue", size = 6)+
-  annotate(x = 2010, y = 75, geom = "text", label = TeX("\\textbf{H^+}"), color = 'red', size = 6)
+  scale_y_continuous(name = TeX("\\textbf{Concentrations ($\\mu eq $L^{-1}$)}"))+scale_x_continuous(breaks = seq(1994,2022,4))+
+  ggtitle(TeX('\\textbf{H^+ and NH_4^+ Neutralization}'))+
+  ggplot2::annotate(x = 2010, y = -75, geom = "text", label = TeX("\\textbf{NH_4^+ - SO_4^{-2} - NO_3^-}"), color = "blue", size = 6)+
+  ggplot2::annotate(x = 2010, y = 75, geom = "text", label = TeX("\\textbf{H^+}"), color = 'red', size = 6)
 
-CationAnion<-ggplot(data = subset(AllMedians, Year < 2018))+
-  #  stat_summary(aes(x = Year, group = Year, y =LABPH), fun.data = median_IQR,
-  # size = 1 ,color = "black")+
+CationAnion<-ggplot(data = subset(AllMedians))+
+
   geom_line(aes(x = Year, y = Ratio), 
                size = 3 ,color = "grey", geom = "line")+
   geom_point(aes(x = Year, y = Ratio), 
                size = 5, color = "black", fill = "grey", shape = 21)+
-  #geom_hline(yintercept = 0, size =3)+
+
   theme_bw()+theme(axis.text.y = element_text(size = 18),axis.text.x = element_text(size = 18),axis.title = element_text(size = 16, face = "bold"))+
   theme(panel.border = element_blank(), axis.line = element_line(colour = "black"), title = element_text(face = "bold", size = 18))+
-  scale_y_continuous(name = TeX("\\textbf{Cations/Anions}"))+scale_x_continuous(breaks = seq(1994,2017,4))+
+  scale_y_continuous(name = TeX("\\textbf{Cations/Anions}"))+scale_x_continuous(breaks = seq(1994,2022,4))+
   ggtitle('Cation/Anion Ratio')+
   annotate(geom = 'text',x = 1998, y = 1.4, size = 6,
            label = paste("y=",signif(AllSlope$Slope[AllSlope$Analyte=="Ratio"][[1]],digits = 3),"x +", 
@@ -433,110 +540,81 @@ CationAnion<-ggplot(data = subset(AllMedians, Year < 2018))+
 
 NH4CationRatio<-grid.arrange(SurplusNH4,CationAnion, layout_matrix = rbind(c(1,NA,1,NA), c(2,NA,2,NA)))
 
-ggsave(filename = "SurplusNH4_CationAnion.png", NH4CationRatio, width = 8, height = 8)
+ggsave(filename = "Figure6.png", NH4CationRatio, width = 8, height = 8)
+
+## Figure S4 Cation/Anion and Pred/Meas Conductivity vs pH####
+
+CationAnionpH<-ggplot(AllCloudData)+
+  geom_point(aes(x = LABPH, y = Cations/Anions, color = Year))+
+  geom_hline(yintercept = 1)+
+  scale_y_log10(limits  =c(0.01, 10))+
+  annotation_logticks(sides = "l")+
+  scale_color_gradientn(colors = rainbow(6))+labs(color = "Year", x = "pH",
+                                                  y = "Cations/Anions",
+                                                  title = "Cation/Anion Ratios vs pH")+
+  PaperQuality()+theme(legend.position = "right", legend.title = element_text(size = 12))
+  
+
+PredMeaCondpH<-ggplot(AllCloudData)+
+  geom_point(aes(x = LABPH, y = PredCond/SPCOND, color = Year))+
+  geom_abline(slope = 0, intercept = 1)+
+  geom_abline(slope = 0, intercept = 1.2, linetype = "dashed")+
+  geom_abline(slope = 0, intercept = .8, linetype = 'dashed')+
+  scale_y_continuous(limits = c(0.1,2))+
+  scale_color_gradientn(colors = rainbow(6))+labs(title = "Predicted/Measured Conductivity Ratios vs pH",
+                                                  color = "Year", x = "pH",
+                                                  y = "Predicted/Measured Conductivty")+
+  PaperQuality()+theme(legend.position = "right", legend.title = element_text(size = 12))
+
+RatioPlot<-grid.arrange(CationAnionpH, PredMeaCondpH)
+
+ggsave("FigureS4.png", RatioPlot, width = 8, height = 10)
 
 
-## Figure 7 HCO3 Estimates affecting Ion Balance ####
-
-HCO3IonBalanceAll<-ggplot(AllCloudData)+
-  geom_point(aes(x = Cations, y = Anions, color = "No HCO3"), size = 2)+
-  geom_smooth(aes(x= Cations,y = Anions, color = "No HCO3"), method = lm , formula = y~x+0, size =2)+
-  geom_point(aes(x = Cations, y = Anions+HCO3Total, color = "HCO3 Included"), size = 2)+
-  geom_smooth(aes(x= Cations,y = Anions+HCO3Total, color = "HCO3 Included"), method = lm , formula = y~x+0, size = 2)+
-  geom_abline(intercept = 0, slope = 1, color = "black", linetype = "dashed" , size = 2)+
-  PaperQuality()+scale_x_continuous(name = TeX("\\textbf{Cations ($\\mu eq $ L^{-1}$)}"))+scale_y_continuous(name = TeX("\\textbf{Anions ($\\mu eq $ L^{-1}$)}"))+
-  stat_regline_equation(aes(x = Cations, y = Anions, color = "No HCO3", label = paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")), 
-                        label.x = 250, label.y = 4750,formula = y~x+0, size = 6)+
-  stat_regline_equation(aes(x= Cations, y = Anions, color = "HCO3 Included",label = paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
-                        label.x = 250, label.y = 3750,formula = y~x+0, size = 6)+ggtitle("Ion Balance All Data")
-
-HCO3IonBalanceHighpH<-ggplot(subset(AllCloudData, LABPH > 5))+
-  geom_point(aes(x = Cations, y = Anions, color = "No HCO3"), size = 2)+
-  geom_smooth(aes(x= Cations,y = Anions, color = "No HCO3"), method = lm , formula = y~x+0, size = 2)+
-  geom_point(aes(x = Cations, y = Anions+HCO3Total, color = "HCO3 Included"), size = 2)+
-  geom_smooth(aes(x= Cations,y = Anions+HCO3Total, color = "HCO3 Included"), method = lm , formula = y~x+0, size = 2)+
-  PaperQuality()+scale_x_continuous(name = TeX("\\textbf{Cations ($\\mu eq $ L^{-1}$)}"))+scale_y_continuous(name = TeX("\\textbf{Anions ($\\mu eq $ L^{-1}$)}"))+
-  geom_abline(intercept = 0, slope = 1, color = "black", linetype = "dashed" , size = 2)+
-  stat_regline_equation(aes(x = Cations, y = Anions, color = "No HCO3", label = paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")), 
-                        label.x = 250, label.y = 3000,formula = y~x+0, size = 6)+
-  stat_regline_equation(aes(x= Cations, y = Anions+HCO3Total, color = "HCO3 Included",label = paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
-                        label.x = 250, label.y = 2250,formula = y~x+0, size = 6)+ggtitle("Ion Balance for pH > 5")
-
-
-
-IonBalancePlots<-grid.arrange(HCO3IonBalanceAll, HCO3IonBalanceHighpH)
-
-ggsave(filename = "CationAnionBalance.png", IonBalancePlots, width = 8, height = 8)
-
-
-#Figure 8 Cations vs Anions as Function of pH ####
-
-IonBalancebypH<-ggplot(subset(AllCloudData, !is.na(pHBin)))+
-  geom_point(aes(x = Cations, y = Anions, color = LABPH), size = 2)+
-  geom_smooth(aes(x= Cations,y = Anions), method = lm , formula = y~x+0, size =2)+
-  PaperQuality()+scale_x_continuous(name = TeX("\\textbf{Cations ($\\mu eq $ L^{-1}$)}"))+scale_y_continuous(name = TeX("\\textbf{Anions ($\\mu eq $ L^{-1}$)}"))+
-  geom_abline(intercept = 0, slope = 1, color = "black", linetype = "dashed" , size = 2)+
-  facet_wrap(~pHBin)+scale_color_gradientn(colors = rainbow(6))+
-  theme(legend.position = "right", legend.title = element_text(size = 14, face = "bold"),
-        strip.text = element_text(size = 14, face = "bold"))+
-  stat_regline_equation(aes(x = Cations, y = Anions, label = paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")), 
-                      label.x = 250, label.y = 4500,formula = y~x+0, size = 5)
-ggsave(plot = IonBalancebypH, file = "IonBalancebypH.png", height = 8, width = 12)
-
-
-## Figure 9 TOC vs Ion Balance, All Data ####
-
-IonBalanceSenAll<-zyp.sen(TOC~IonBalance, 
-                          dataframe = na.omit(AllCloudData))
-
-
-TOCBalanceAll<-ggplot(na.omit(AllCloudData),aes(x= Cations-Anions, y = TOC))+
-  geom_point(aes(x= (Cations-Anions), y = TOC), size = 3, color = 'forest green')+
-  #  geom_smooth(method = 'rlm', aes(color = "RLM"))+
-  # geom_smooth(method = "rlm")+
-  geom_smooth(method = lm, size = 3)+
- # geom_abline(aes(intercept = IonBalanceSenNonLinear$coefficients[[1]], 
-    #              slope = IonBalanceSenNonLinear$coefficients[[2]]), 
-   #           size = 2, color = "red", 
-  #            data = AllCloudData%>%filter(Regime == "Non-Linear"))+
-  scale_color_gradientn(colors = rainbow(6))+
-  labs(color = "pH")+ylim(c(0,3500))+ylab(TeX("\\textbf{TOC ($\\mu molC $ L^{-1}$)}"))+
-  xlab(TeX("\\textbf{Cations - Anions ($\\mu eq $ L^{-1}$)}"))+
- # geom_text(aes(x = 0, y = 3000), size = 6,
-    #        data = AllCloudData%>%filter(Regime == "Non-Linear"),
-     #       label = paste("y=",signif(IonBalanceSenAll$coefficients[[1]],digits = 3),"+", 
-             #             signif(IonBalanceSenAll$coefficients[[2]],digits = 3),"x"), color = "red")+
-  # stat_regline_equation(method = "rlm")
-  stat_regline_equation(size =6, label.x = 0, label.y = 3000,
-                        aes(label = paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")))+
-  PaperQuality()+theme(legend.position = 'right', 
-                       legend.title = element_text(size =14),
-                       strip.text.y = element_text(face = "bold", size = 14))
-
-ggsave(plot = TOCBalanceAll, filename = "TOCBalanceAll.png", width = 8, height = 8)
-
-
-## Figure 10 TOC vs LWC ####
-#There is a seperate script for calculating the Average LWC Data
+## Figure S5 TOC vs LWC ####
 
 LWCLoadingData<-read.csv("CloudLWCLoading.csv", header = TRUE)%>%
-  mutate(TOC = WSOC)%>%
-  mutate()
+  filter(Year > 2008)%>%
+  mutate(Cations = 1e6*10^(-LABPH)+NH4+Sodium+MG+CA+K,
+         Anions = SO4+NO3+CL)
+LWCLoadingData<-LWCLoadingData%>%
+  filter(LWCCalc < 2)%>%
+  mutate(LWCCalcBin = cut(LWCCalc, breaks = seq(0.1, 1, .05),
+                      include.lowest = TRUE))%>%
+  mutate(LWCBin = cut(LWC, breaks = seq(0.1, 1, .05),
+                          include.lowest = TRUE),
+         TIC = Cations+Anions)%>%
+  filter(!is.na(LWCCalcBin))%>%
+  mutate(InferredpH = -log10(10^(-LABPH)+(CA+MG)/1e6),
+         InferredBin = cut(InferredpH, breaks = seq (2, 5, .5)))
 
-TOCvsLWC<-ggplot(LWCLoadingData)+
-  geom_point(aes(x = LWCCalc, y = TOC), color = "Forest Green",size = 3)+
-  PaperQuality()+scale_y_continuous(name = TeX('\\textbf{TOC ($\\mu molC$ L^{-1})}'))+
-  scale_x_continuous(name = TeX('\\textbf{LWC (g m^{-3})}'))
+  
+TOCvsLWCBin<-ggplot(LWCLoadingData)+
+  geom_boxplot(aes(x = LWCCalcBin, y = TOC), fill = 'forest green')+
+  PaperQuality()+
+  scale_y_continuous(name = TeX('\\textbf{TOC ($\\mu molC$ L^{-1})}'))+
+  theme(axis.text.x = element_text(angle = 90,
+                                   vjust = .5))+
+  ggtitle("TOC")+xlab(TeX("\\textbf{LWC (g m^{-3})}"))
+
+TICvsLWCBin<-ggplot(LWCLoadingData)+  
+  geom_boxplot(aes(x = LWCCalcBin, y = TIC), fill = "light blue")+
+  PaperQuality()+
+  scale_y_continuous(name = TeX('\\textbf{TIC ($\\mu eq$L^{-1})}'))+
+  theme(axis.text.x = element_text(angle = 90,
+                                   vjust = .5))+
+  ggtitle("TIC")+xlab(TeX("\\textbf{LWC (g m^{-3})}"))
 
 
+BinData<-grid.arrange(TICvsLWCBin,TOCvsLWCBin)
+ggsave(plot = BinData, filename = "FigureS5.png", width = 8, height = 8)
 
-ggsave(plot = TOCvsLWC, filename = "TOCLWC.png", width = 8, height = 8)
 
+## Figure 7 Cloud Water Loadings ####
 
-## Figure 11 Cloud Water Loadings ####
 
 CWLSlope<-TheilSenFunction(LWCLoadingData, analytes = list("LWCCalc","SO4Mass", "NO3Mass", "NH4Mass", "TOCMass", "CAMass", "MGMass", "KMass", 
-                                                         "NaMass", "CLMass"), fun = median)
+                                                           "NaMass", "CLMass"), fun = median)
 CWLSlope$Analyte<-c("LWC","SO4","NO3", "NH4", "TOC", "Ca", "Mg", "K", "Na", "Cl")
 CWLNoInter<-CWLSlope%>%
   select(-Intercept)%>%
@@ -564,7 +642,7 @@ CWLMassPlots<-ggplot(CWLMedians)+
   geom_line(aes(x = Year, y = TOCMass/4),color = "forest green",size = 4)+
   geom_point(aes(x = Year, y = TOCMass/4, fill = "TOC"), size = 4, shape =21)+
   geom_smooth(aes(x = Year, y = TOCMass/4, color = "TOC"), method = sen, size = 2, se = FALSE)+
-  scale_x_continuous(breaks = seq(1994, 2018, by = 4))+scale_y_continuous(guide = guide_axis(check.overlap = TRUE),sec.axis = sec_axis(trans = ~.x*4, name = TeX("\\textbf{TOC Concentration (nmolC m^{-3})}")),
+  scale_x_continuous(breaks = seq(2010, 2022, by = 4))+scale_y_continuous(guide = guide_axis(check.overlap = TRUE),sec.axis = sec_axis(trans = ~.x*4, name = TeX("\\textbf{TOC Concentration (nmolC m^{-3})}")),
                                                                           name =TeX("\\textbf{Ion CWL (neq  m^{-3}$)}"))+
   scale_fill_manual(values = c("SO4" = "red", "NO3" = "blue", "NH4" = 'orange', "TOC" = "forest green"))+
   scale_color_manual(values = c("SO4" = "red", "NO3" = "blue", "NH4" = 'orange', "TOC" = "forest green"), guide = FALSE)+
@@ -577,76 +655,137 @@ CWLMassPlots<-ggplot(CWLMedians)+
            label = paste("y=",signif(CWLSlope$Slope[CWLSlope$Analyte=="NH4"][[1]],digits = 3),"x +", 
                          signif(CWLSlope$Intercept[CWLSlope$Analyte=="NH4"][[1]], digits = 3)), color = "orange")+
   annotate(geom = 'text',x = 2012, y = 64, size = 6,
-           label = paste("y=",signif(ValidSlope$Slope[CWLSlope$Analyte=="NO3"][[1]],digits = 3),"x +", 
+           label = paste("y=",signif(CWLSlope$Slope[CWLSlope$Analyte=="NO3"][[1]],digits = 3),"x +", 
                          signif(CWLSlope$Intercept[CWLSlope$Analyte=="NO3"][[1]], digits = 3)), color = "blue")+
   annotate(geom = 'text',x = 2012, y = 56, size = 6,
            label = paste("y=",signif(CWLSlope$Slope[CWLSlope$Analyte=="TOC"][[1]],digits = 3),"x +", 
                          signif(CWLSlope$Intercept[CWLSlope$Analyte=="TOC"][[1]], digits = 3)), color = "forest green")+
   ggtitle("Major Analytes")
-
-
-
-CWLMassPlots<-ggplot(CWLMedians)+
-  geom_line(aes(x = Year, y = SO4Mass), color = "red",size = 4)+
-  geom_point(aes(x = Year, y = SO4Mass, fill = "SO4"), size = 4, shape = 21)+
-  geom_smooth(aes(x = Year, y = SO4Mass, color = "SO4"), method = sen, size =2, se = FALSE)+
-  geom_line(aes(x = Year, y = NO3Mass),color = "blue", size = 4)+
-  geom_point(aes(x = Year, y = NO3Mass, fill = "NO3"), size = 4, shape = 21)+
-  geom_smooth(aes(x = Year, y = NO3Mass, color = "NO3"), method = sen, size = 2, se = FALSE)+
-  geom_line(aes(x = Year, y = NH4Mass), color = "orange", size = 4)+
-  geom_point(aes(x = Year, y = NH4Mass, fill = "NH4"), size = 4, shape = 21)+
-  geom_smooth(aes(x = Year, y = NH4Mass, color = "NH4"), method = sen, size = 2, se = FALSE)+
-  geom_line(aes(x = Year, y = TOCMass/4),color = "forest green",size = 4)+
-  geom_point(aes(x = Year, y = TOCMass/4, fill = "TOC"), size = 4, shape =21)+
-  geom_smooth(aes(x = Year, y = TOCMass/4, color = "TOC"), method = sen, size = 2, se = FALSE)+
-  scale_x_continuous(breaks = seq(1994, 2018, by = 4))+scale_y_continuous(guide = guide_axis(check.overlap = TRUE),sec.axis = sec_axis(trans = ~.x*4, name = TeX("\\textbf{TOC Concentration (nmolC m^{-3})}")),
-                                                                          name =TeX("\\textbf{Ion CWL (neq  m^{-3}$)}"))+
-  scale_fill_manual(values = c("SO4" = "red", "NO3" = "blue", "NH4" = 'orange', "TOC" = "forest green"))+
-  scale_color_manual(values = c("SO4" = "red", "NO3" = "blue", "NH4" = 'orange', "TOC" = "forest green"), guide = FALSE)+
-  PaperQuality()+theme(axis.text.y.right = element_text(color = "forest green"),
-                       axis.ticks = element_line(color = "forest green"), axis.title.y.right = element_text(color = "forest green", size = 15))+
-  annotate(geom = 'text',x = 2012, y = 80, size = 6,
-           label = paste("y=",signif(CWLSlope$Slope[CWLSlope$Analyte=="SO4"][[1]],digits = 3),"x +", 
-                         signif(CWLSlope$Intercept[CWLSlope$Analyte=="SO4"][[1]], digits = 3)), color = "red")+
-  annotate(geom = 'text',x = 2012, y = 72, size = 6,
-           label = paste("y=",signif(CWLSlope$Slope[CWLSlope$Analyte=="NH4"][[1]],digits = 3),"x +", 
-                         signif(CWLSlope$Intercept[CWLSlope$Analyte=="NH4"][[1]], digits = 3)), color = "orange")+
-  annotate(geom = 'text',x = 2012, y = 64, size = 6,
-           label = paste("y=",signif(ValidSlope$Slope[CWLSlope$Analyte=="NO3"][[1]],digits = 3),"x +", 
-                         signif(CWLSlope$Intercept[CWLSlope$Analyte=="NO3"][[1]], digits = 3)), color = "blue")+
-  annotate(geom = 'text',x = 2012, y = 56, size = 6,
-           label = paste("y=",signif(CWLSlope$Slope[CWLSlope$Analyte=="TOC"][[1]],digits = 3),"x +", 
-                         signif(CWLSlope$Intercept[CWLSlope$Analyte=="TOC"][[1]], digits = 3)), color = "forest green")+
-  ggtitle("Major Analytes")
-
-
 
 
 
 CWLPlots<-ggarrange(CWLMassPlots, CWLTable, nrow = 1, ncol = 2)
 
 
-ggsave(plot = CWLPlots, filename = "CWLPlots.png",width = 12, height = 6)
+ggsave(plot = CWLPlots, filename = "Figure7.png",width = 12, height = 6)
 
-## Figure 12 Conductivity vs pH ####
 
-HCondPlot<-ggplot(AllCloudData)+
+## Figure S6 HCO3 Improvements on Ion Balance ####
+
+
+HCO3IonBalanceAll<-ggplot(AllCloudData)+
+  geom_point(aes(x = Cations, y = Anions, color = "No HCO3"), size = 2)+
+  geom_smooth(aes(x= Cations,y = Anions, color = "No HCO3"), method = lm , formula = y~x+0, size =2)+
+  geom_point(aes(x = Cations, y = Anions+HCO3Gas, color = "HCO3 Included"), size = 2)+
+  geom_smooth(aes(x= Cations,y = Anions+HCO3Gas, color = "HCO3 Included"), method = lm , formula = y~x+0, size = 2)+
+  geom_abline(intercept = 0, slope = 1, color = "black", linetype = "dashed" , size = 2)+
+  PaperQuality()+scale_x_continuous(name = TeX("\\textbf{Cations ($\\mu eq $ L^{-1}$)}"))+scale_y_continuous(name = TeX("\\textbf{Anions ($\\mu eq $ L^{-1}$)}"))+
+  stat_regline_equation(aes(x = Cations, y = Anions, color = "No HCO3", label = paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")), 
+                        label.x = 250, label.y = 4750,formula = y~x+0, size = 6)+
+  stat_regline_equation(aes(x= Cations, y = Anions, color = "HCO3 Included",label = paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
+                        label.x = 250, label.y = 3750,formula = y~x+0, size = 6)+ggtitle("Ion Balance All Data")
+
+HCO3IonBalanceHighpH<-ggplot(subset(AllCloudData, LABPH > 6))+
+  geom_point(aes(x = Cations, y = Anions, color = "No HCO3"), size = 2)+
+  geom_smooth(aes(x= Cations,y = Anions, color = "No HCO3"), method = lm , formula = y~x+0, size = 2)+
+  geom_point(aes(x = Cations, y = Anions+HCO3Gas, color = "HCO3 Included"), size = 2)+
+  geom_smooth(aes(x= Cations,y = Anions+HCO3Gas, color = "HCO3 Included"), method = lm , formula = y~x+0, size = 2)+
+  PaperQuality()+scale_x_continuous(name = TeX("\\textbf{Cations ($\\mu eq $ L^{-1}$)}"))+scale_y_continuous(name = TeX("\\textbf{Anions ($\\mu eq $ L^{-1}$)}"))+
+  geom_abline(intercept = 0, slope = 1, color = "black", linetype = "dashed" , size = 2)+
+  stat_regline_equation(aes(x = Cations, y = Anions, color = "No HCO3", label = paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")), 
+                        label.x = 250, label.y = 3000,formula = y~x+0, size = 6)+
+  stat_regline_equation(aes(x= Cations, y = Anions+HCO3Gas, color = "HCO3 Included",label = paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
+                        label.x = 250, label.y = 2250,formula = y~x+0, size = 6)+ggtitle("Ion Balance for pH > 6")
+
+
+
+IonBalancePlots<-grid.arrange(HCO3IonBalanceAll, HCO3IonBalanceHighpH)
+
+
+ggsave(plot = IonBalancePlots, filename = "FigureS6.png", width = 8, height = 8)
+
+
+## Figure S7 Ion Balance vs TOC ####
+#There is a seperate script for calculating the Average LWC Data
+
+TOCBalanceAll<-ggplot(na.omit(AllCloudData),aes(x= Cations-Anions, y = TOC))+
+  geom_point(aes(x= (Cations-Anions), y = TOC), size = 3, color = 'forest green')+
+ 
+  geom_smooth(method = lm, size = 3)+
+  scale_color_gradientn(colors = rainbow(6))+
+  labs(color = "pH")+ylim(c(0,3500))+ylab(TeX("\\textbf{TOC ($\\mu molC $ L^{-1}$)}"))+
+  xlab(TeX("\\textbf{Cations - Anions ($\\mu eq $ L^{-1}$)}"))+
+  stat_regline_equation(size =6, label.x = 0, label.y = 3000,
+                        aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~~")))+
+  PaperQuality()+theme(legend.position = 'right', 
+                       legend.title = element_text(size =14),
+                       strip.text.y = element_text(face = "bold", size = 14))
+
+ggsave(filename = "FigureS7.png", TOCBalanceAll, width = 8, height = 8)
+
+
+## Figure S8 Ion Balance by pH ####
+
+IonBalancebypH<-ggplot(subset(AllCloudData, !is.na(pHBin)))+
+  geom_point(aes(x = Cations, y = Anions, color = LABPH), size = 2)+
+  geom_smooth(aes(x= Cations,y = Anions), method = lm , formula = y~x+0, size =2)+
+  PaperQuality()+scale_x_continuous(name = TeX("\\textbf{Cations ($\\mu eq $ L^{-1}$)}"))+scale_y_continuous(name = TeX("\\textbf{Anions ($\\mu eq $ L^{-1}$)}"))+
+  geom_abline(intercept = 0, slope = 1, color = "black", linetype = "dashed" , size = 2)+
+  facet_wrap(~pHBin)+scale_color_gradientn(colors = rainbow(6))+
+  theme(legend.position = "right", legend.title = element_text(size = 14, face = "bold"),
+        strip.text = element_text(size = 14, face = "bold"))+
+  stat_regline_equation(aes(x = Cations, y = Anions, label = paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")), 
+                        label.x = 250, label.y = 4500,formula = y~x+0, size = 5)
+ggsave(plot = IonBalancebypH, file = "FigureS5.png", height = 8, width = 12)
+
+ggplot(subset(AllCloudData, !is.na(InferredBin)  & !is.na(TOC)))+
+  geom_point(aes(x = Cations, y = Anions, color = TOC), size = 2)+
+  geom_smooth(aes(x= Cations,y = Anions), method = lm , formula = y~x+0, size =2)+
+  PaperQuality()+scale_x_continuous(name = TeX("\\textbf{Cations ($\\mu eq $ L^{-1}$)}"))+scale_y_continuous(name = TeX("\\textbf{Anions ($\\mu eq $ L^{-1}$)}"))+
+  geom_abline(intercept = 0, slope = 1, color = "black", linetype = "dashed" , size = 2)+
+  facet_wrap(~InferredBin)+scale_color_gradientn(colors = rainbow(6), trans = "log10")+
+  theme(legend.position = "right", legend.title = element_text(size = 14, face = "bold"),
+        strip.text = element_text(size = 14, face = "bold"))+
+  stat_regline_equation(aes(x = Cations, y = Anions, label = paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")), 
+                        label.x = 250, label.y = 4500,formula = y~x+0, size = 5)+
+  ylim(c(0,500))+xlim(c(0,500))
+
+
+
+ggsave(plot = IonBalancebypH, file = "FigureS8.png", height = 8, width = 12)
+
+
+
+
+## Figure 9 Conductivity vs pH ####
+
+HCondPlot<-ggplot(subset(AllCloudData, !is.na(HCond/SPCOND) & HCond/SPCOND >= 0 & HCond/SPCOND <=1))+
   geom_point(aes(x= LABPH, y = SPCOND, color = HCond/SPCOND),
              size = 3)+
   scale_color_gradientn(colors = rainbow(6), limits = c(0,1))+
-  scale_x_continuous(name = "pH")+
+  scale_x_continuous(name = TeX("\\textbf{pH}"))+
+  geom_abline(slope =-1, intercept = 5.5, linetype = "dotted", size = 2)+
+  geom_abline(slope = -1, intercept = 6, linetype ='dashed', size =2)+
   scale_y_log10(limits =c(1,1000),
                 name = TeX('\\textbf{Conductivity ($\\mu S$ cm^{-1})}'))+
-  labs(color = TeX("\\textbf{HCond Fraction}"))+
-  PaperQuality()+theme(legend.position = "right",
-                       legend.title = element_text(size = 14))
+  labs(color = TeX("\\textbf{R_{Cond} Fraction}"))+PaperQuality()+
+  theme(legend.position = "right",
+                       legend.title = element_text(size = 20),legend.text = element_text(size = 20),
+        axis.title.y = element_text(size = 22), axis.text.x = element_text(size = 22),
+        axis.title.x = element_text(size = 22), axis.text.y = element_text(size = 22))
   
 
-ggsave(plot = HCondPlot, filename = "HCondPlot.png", 
+ggsave(plot = HCondPlot, filename = "Figure9.png", 
        height = 6, width = 10)
 
 
-## Figure 13 Percent in the New Regime #### 
+AllCloudData%>%
+  group_by(Year)%>%
+  summarise(across(where(is.numeric), median,na.rm = TRUE))%>%
+  select(Year, HCond)%>%
+  tail()
+
+## Figure 10 Percent in the New Regime #### 
 
 PercentRegime<-AllCloudData%>%
   select(-TOC)%>% ##Include whole dataset, as TOC start at 2009
@@ -664,290 +803,259 @@ PercentRegime<-PercentRegime[seq(2, nrow(PercentRegime), by =2),] ##Filters out 
 
 
 PercentPlotRegime<-ggplot(PercentRegime)+
-  geom_line(aes(Year, y = Percent), color = 'red', size = 2)+
+  geom_line(aes(Year, y = Percent), color = 'red', size = 4)+
   geom_point(aes(Year, y = Percent), fill = "red", shape = 21, size = 4)+
-  PaperQuality()+scale_y_continuous(TeX('\\textbf{Percent Non-Linear (%)}'))+scale_x_continuous(breaks = seq(1994, 2017, 4))
+  PaperQuality()+scale_y_continuous(TeX('\\textbf{Percent Non-Linear (%)}'))+scale_x_continuous(breaks = seq(1994, 2022, 4))+
+  theme(axis.title.y = element_text(size = 20), axis.title.x = element_text(size = 20), axis.text.x = element_text(size = 20), axis.text.y = element_text(size =20))
 
-ggsave(PercentPlotRegime, filename = "PercentPlotRegime.png", width =5, height = 5)
+CondandPerc<-grid.arrange(HCondPlot,PercentPlotRegime, ncol = 2)
+
+ggsave(CondandPerc, filename = "Figure10.png", width =20, height = 6)
 
 
-# Table 1. Regime Dunn Test ####
+## Table 1. Regime Dunn Test ####
 
-AllCloudData%>%
+RegimeTableData<-AllCloudData%>%
   mutate(`Ion Balance` = Cations - Anions)%>%
-  dplyr::select(c(Regime,LABPH:TOC, `Ion Balance`))%>%
-  pivot_longer(cols = !Regime, names_to = "Species", values_to = "Conc")%>%
-  group_by(Species)%>%
-  kruskal_test(Conc~Regime)
+  dplyr::select(c(Regime,LABPH:TOC, `Ion Balance`))
 
-DunnTestbyRegime<-AllCloudData%>%
-  mutate(`Ion Balance` = Cations - Anions)%>%
-  dplyr::select(c(Regime,LABPH:TOC, `Ion Balance`))%>%
-  dplyr::rename(pH = LABPH, Conductivity = SPCOND, Na = Sodium, Ca = CA, Mg = MG, Cl = CL)%>%
+names(RegimeTableData)<-paste0(names(RegimeTableData), 
+                         c("", "", ' (uS/cm)',' (ueq/L)', ' (ueq/L)',
+                           ' (ueq/L)',' (ueq/L)',' (ueq/L)'," (ueq/L)",
+                           " (ueq/L)",' (ueq/L)',"", " (g/m^3)",
+                           '', '', ' (umolC/L)', ' (ueq/L)'))
+                        
+
+DunnTestbyRegime<-RegimeTableData%>%
+  #select( dplyr::select(c(Regime,LABPH:TOC, `Ion Balance`)))%>%
+ # mutate(`Ion Balance` = Cations - Anions)%>%
+  dplyr::select(c(Regime,LABPH:`TOC (umolC/L)`, `Ion Balance (ueq/L)`))%>%
+  dplyr::rename(pH = LABPH, `Conductivity (uS/cm) ` = `SPCOND (uS/cm)`, `Na (ueq/L)` = `Sodium (ueq/L)`, 
+                `Ca (ueq/L)` = `CA (ueq/L)`,
+                `Mg (ueq/L)` = `MG (ueq/L)`, `Cl (ueq/L)` = `CL (ueq/L)`)%>%
   pivot_longer(cols = !Regime, names_to = "Species", values_to = "Conc")%>%
+  
   group_by(Species)%>%
-  dunn_test(Conc~Regime,p.adjust.method = "holm", detailed = TRUE)%>%
+  dunn_test(Conc~Regime,p.adjust.method = "none", detailed = TRUE)%>%
   dplyr::select(c("Species", "estimate", "n1", "n2", "p.adj", "p.adj.signif"))
 
 
-MedianOld<-AllCloudData%>%
-  mutate(`Ion Balance` = Cations - Anions)%>%
-  dplyr::select(c(Regime,LABPH:TOC, `Ion Balance`))%>%
-  dplyr::rename(pH = LABPH, Conductivity = SPCOND, Na = Sodium, Ca = CA, Mg = MG, Cl = CL)%>%
+
+MedianOld<-RegimeTableData%>%
+ # mutate(`Ion Balance` = Cations - Anions)%>%
+  dplyr::select(c(Regime,LABPH:`TOC (umolC/L)`, `Ion Balance (ueq/L)`))%>%
+  dplyr::rename(pH = LABPH, `Conductivity (uS/cm) ` = `SPCOND (uS/cm)`, `Na (ueq/L)` = `Sodium (ueq/L)`, 
+                `Ca (ueq/L)` = `CA (ueq/L)`,
+                `Mg (ueq/L)` = `MG (ueq/L)`, `Cl (ueq/L)` = `CL (ueq/L)`)%>%
   pivot_longer(cols = !Regime, names_to = "Species", values_to = "Conc")%>%
   filter(Regime == "Linear")%>%
   group_by(Species)%>%
   summarise(across(where(is.numeric), median, na.rm = TRUE))%>%
-  dplyr::rename(`Old Regime Median` = Conc)
-MedianNew<-AllCloudData%>%
-  mutate(`Ion Balance` = Cations - Anions)%>%
-  dplyr::select(c(Regime,LABPH:TOC, `Ion Balance`))%>%
-  dplyr::rename(pH = LABPH, Conductivity = SPCOND, Na = Sodium, Ca = CA, Mg = MG, Cl = CL)%>%
+  dplyr::rename(`Linear Median` = Conc)
+
+
+MedianNew<-RegimeTableData%>%
+  dplyr::select(c(Regime,LABPH:`TOC (umolC/L)`, `Ion Balance (ueq/L)`))%>%
+  dplyr::rename(pH = LABPH, `Conductivity (uS/cm) ` = `SPCOND (uS/cm)`, `Na (ueq/L)` = `Sodium (ueq/L)`, 
+                `Ca (ueq/L)` = `CA (ueq/L)`,
+                `Mg (ueq/L)` = `MG (ueq/L)`, `Cl (ueq/L)` = `CL (ueq/L)`)%>%
   pivot_longer(cols = !Regime, names_to = "Species", values_to = "Conc")%>%
   filter(Regime == "Non-Linear")%>%
   group_by(Species)%>%
   summarise(across(where(is.numeric), median, na.rm = TRUE))%>%
-  dplyr::rename(`New Regime Median` = Conc)
+  dplyr::rename(`Non-Linear Median` = Conc)
+
 
 
 DunnTestbyRegime<-inner_join(DunnTestbyRegime, MedianOld, by = "Species")
 DunnTestbyRegime<-inner_join(DunnTestbyRegime, MedianNew, by = "Species")
 
 DunnResults<-DunnTestbyRegime%>%
-  dplyr::select(c("Species","n1", "n2", "New Regime Median", "Old Regime Median", "p.adj", "p.adj.signif"))%>%
-  arrange(desc(`New Regime Median`) )%>%
-  dplyr::rename(`Old Regime n` = n1, `New Regime n` = n2)%>%
-  mutate(Difference = `New Regime Median` - `Old Regime Median`)%>%
-  dplyr::select(c(Species, `New Regime Median`,`Old Regime Median`, Difference, p.adj, `New Regime n`, `Old Regime n`))%>%
-  mutate(across(where(is.numeric), signif, digits = 4))
-  
+  dplyr::select(c("Species","n1", "n2", "Non-Linear Median", "Linear Median", "p.adj", "p.adj.signif"))%>%
+  arrange(desc(`Non-Linear Median`) )%>%
+  dplyr::rename(`Linear n` = n1, `Non-Linear n` = n2)%>%
+  mutate(Difference = `Non-Linear Median` - `Linear Median`)%>%
+  dplyr::select(c(Species, `Non-Linear Median`,`Linear Median`, Difference, p.adj, `Non-Linear n`, `Linear n`))%>%
+  mutate(across(c(`Non-Linear Median`,`Linear Median`, Difference), round, digits = 3),
+         p.adj = signif(p.adj, digits = 3))%>%
+  mutate(`Non-Linear Median` = format(`Non-Linear Median`, scientific = FALSE),
+         `Linear Median` = format(`Linear Median`, scientific = FALSE))%>%
+  filter(Species !="Hplus" & Species != "WSOC" & Species != "SampleVolume")%>%
+  mutate(`Percent Difference` = 100*(as.numeric(`Non-Linear Median`)-as.numeric(`Linear Median`))/as.numeric(`Non-Linear Median`),
+         p.adj = ifelse(p.adj < 0.001, "p < 0.001", p.adj),
+         `Percent Difference` = percent(`Percent Difference`/100))%>%
+  relocate(`Percent Difference`, .after  = Difference)%>%
+  rename(`p-value` = p.adj)
+  #mutate(across(where(is.numeric), as.character))%>%
+  #mutate(across(`Non-Linear Median`:p, str_remove_all, "0+"))
+
   
 RegimeTable<-ggtexttable(DunnResults, theme = ttheme("light", base_size = 16, colnames.style = colnames_style(face = "italic", size = 16)), rows = NULL)%>%
   tab_add_title(text = paste("Dunn-Test Comparison of Regimes", sep = "\n"), size = 17, face = "bold",padding = unit(1, "line"),
                 just = "left")
 
 
-ggsave(filename = "RegimeTable.png", plot = RegimeTable, width = 12, height = 8)
+ggsave(filename = "Table1.png", plot = RegimeTable, width = 14, height = 8)
+
+
+## Figure S9 Size Resolved Plot of Calcium and Potassium in Toronto ####
+
+CaKAerosolData<-read.pxp('Sample3_TO_090807R_MOUDINEQ_BIN.pxp')
+CaKAerosolData<-bind_rows(CaKAerosolData)
 
 
 
+CaKAerosolDataNames<-c('Bin', 'DMA', 'TEA', "NH4", "K", "Na", "Mg", "Ca", 
+                       "AC", "FM", "Cl", "NO2", "NO3", "SO4", "OX", "DEA")
 
-## Figure 14. Measured H+ vs Predicted H+ ####
+
+names(CaKAerosolData)<-CaKAerosolDataNames
+
+CaKAerosolData <- CaKAerosolData[seq(2,nrow(CaKAerosolData),3),] ### Remove triplicate data
+CaKAerosolData<-CaKAerosolData%>%
+  arrange(Bin)%>%
+  mutate(LogDp = log10(Bin/lag(Bin, n = 1)),
+         LogDp = ifelse(is.na(LogDp), log10(0.78/0.5), LogDp))%>%
+  mutate(TotalMass = 1e-3*((NH4*18.04)+(Na*23)+(K*39.09)+(24.305*Mg)+(DEA*73.14)+(Ca/2*40.08)+(FM*45.03)+(AC*59.05)+(Cl*35.45)+
+                            (NO2*46.01)+(NO3*62)+(SO4/2*96.06)+(OX/2*88.03)+
+                            (DMA*45.08)+(TEA*101.19)),
+         Np = TotalMass/(1.5*(pi/6)*(Bin)^3))%>%
+  mutate(MgTot = sum(Mg*LogDp, na.rm = TRUE))%>%
+  mutate(MgPer = LogDp*Mg/MgTot)%>%
+  mutate(CaTot = sum(Ca*LogDp, na.rm = TRUE))%>%
+  mutate(CaPer = LogDp*Ca/CaTot)%>%
+  mutate(SO4Tot = sum(SO4*LogDp, na.rm = TRUE))%>%
+  mutate(SO4Per = LogDp*SO4/SO4Tot)%>%
+  mutate(KTot = sum(K*LogDp, na.rm = TRUE))%>%
+  mutate(KPer = LogDp*K/KTot,
+         NO3Tot = sum(NO3*LogDp, na.rm = TRUE),
+         NO3Per = LogDp*NO3/NO3Tot,
+         NpTot = sum(Np),
+         NpPer = Np/NpTot)
 
 
-MeasuredpHRegime<-ggplot(subset(AllCloudData, !is.na(Regime),
-                                !is.na(LABPH)))+
-  geom_point(aes(x = Anions - (Cations - Hplus*1e6),
-                 y = Hplus*1e6, color = Regime),
-             size = 3)+
-  geom_smooth(aes(x = Anions - (Cations - Hplus*1e6),
-                  y = Hplus*1e6), method = "lm",
-              size  =2)+
-  geom_abline(intercept = 0, slope = 1)+
-  stat_regline_equation(size =6 ,aes(x = Anions - (Cations - Hplus*1e6),
-                            y = Hplus*1e6, color = TOC,
-                            label = paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
-                        formula = y~x+0)+
-  xlab(TeX("\\textbf{Predicted H^{+} ($\\mu$eq L^{-1})}"))+
-  ylab(TeX("\\textbf{Measured H^{+} ($\\mu$eq L^{-1})}"))+
-  facet_grid(Regime~.)+
-  PaperQuality()+
-  theme(strip.text = element_text(face = "bold", size = 14),
-        legend.position = "none")
 
-ggsave(filename = "MeasuredpHRegime.png", plot = MeasuredpHRegime,
+CaKAerosolMassPlot<-ggplot(CaKAerosolData)+
+  geom_line(aes(x= Bin, y = KPer*100, color = "Relative K Mass"), size = 4)+
+  geom_point(aes(x= Bin, y = KPer*100, fill = "Relative K Mass"), size = 4, color = "black", shape = 21)+
+  geom_line(aes(x= Bin, y = CaPer*100, color = "Relative Ca Mass"), size = 4)+
+  geom_point(aes(x= Bin, y = CaPer*100, fill = "Relative Ca Mass"), size = 4, color = "black", shape = 21)+
+  geom_line(aes(x = Bin, y = NO3Per*100, color = "Relative NO3 Mass"), size =4)+
+  geom_point(aes(x = Bin, y = NO3Per*100, fill = "Relative NO3 Mass"), size =4, shape = 21, color = "black")+
+  
+  #  geom_line(aes(x= `Sample2$Bin`, y = ClMass/ClTot, color = "Cl"), size = 2)+
+  #  geom_point(aes(x= `Sample2$Bin`, y = ClMass/ClTot, color = "Cl"), size = 4)+
+  scale_x_log10(name = TeX("\\textbf{Diameter ($\\mu m$)"))+PaperQuality()+
+  scale_color_discrete(guide=FALSE)+
+  ylab("Percentage of Total Mass (%)")+
+  labs(title = 'a)',subtitle = "Percent of Mass of Major Aerosol Species")+
+  theme(axis.title.y = element_text(size = 16))
+
+NPPlot<-ggplot(CaKAerosolData)+
+  geom_line(aes(x= Bin, y = NpPer*100), color = 'purple',size = 4)+
+  geom_point(aes(x= Bin, y = NpPer*100), fill ='purple',size = 4, color = "black", shape = 21)+
+  #  geom_line(aes(x= `Sample2$Bin`, y = ClMass/ClTot, color = "Cl"), size = 2)+
+  #  geom_point(aes(x= `Sample2$Bin`, y = ClMass/ClTot, color = "Cl"), size = 4)+
+  scale_x_log10(name = TeX("\\textbf{Diameter ($\\mu m$)"))+PaperQuality()+
+  scale_color_discrete(guide=FALSE)+
+  ylab("Percent of Total Number (%)")+
+  labs(title= "b)",subtitle = 'Percentage of Total Aerosol Number')+
+  theme(axis.title.y = element_text(size = 16))
+
+
+AllAerosolPlots<-grid.arrange(CaKAerosolMassPlot,NPPlot)
+
+ggsave(filename = "FigureS9.png", plot = AllAerosolPlots, width = 10, height = 12)
+
+##  Figure S10 Measured H+ vs Predicted H+ ####
+MeasuredpHRegime<-ggplot(subset(AllCloudData, !is.na(Regime)))+
+  geom_point(aes(x = NO3+SO4-NH4, y = CA+MG+(1e6*10^(-LABPH)), 
+                 color = "Inferred pH"), size = 3)+
+  geom_point(aes(x = NO3+SO4-NH4, y = (1e6*10^(-LABPH)), 
+                 color = 'Measured pH'), size = 3)+
+  geom_smooth(aes(x = NO3+SO4-NH4, y = 1e6*10^(-LABPH), color = "Measured pH"),
+              method = "lm", size = 3)+
+  geom_smooth(aes(x = NO3+SO4-NH4, y = CA+MG+(1e6*10^(-LABPH)),
+                  color = "Inferred pH"),
+              method = "lm", size = 3)+
+  geom_abline(slope =1, intercept = 0, linetype = "dashed",
+              size = 2)+
+  stat_regline_equation(aes(x = SO4+NO3-NH4, y = (1e6*10^(-LABPH)),
+                            color = "Measured pH",
+                            label = paste(..eq.label.., ..rr.label.., sep = "~~~~")),
+                        label.x.npc = 0.1, label.y.npc = 0.9, size = 5)+
+  
+  stat_regline_equation(aes(x = NO3+SO4-NH4, y = CA+MG+(1e6*10^(-LABPH)),
+                            color = "Inferred pH",
+                            label = paste(..eq.label.., ..rr.label.., sep = "~~~~")),
+                        label.x.npc = 0.1, label.y.npc = .7,
+                        size = 5)+
+  ylab("H+")+facet_grid(Regime~.)+
+  PaperQuality()+  theme(strip.text = element_text(size = 14, face = "bold"))+
+  ylab(TeX("\\textbf{H^{+} ($\\mu$eq L^{-1})}"))+
+  xlab(TeX("\\textbf{SO_4^{2-} + NO_3^- - NH_4^{+} ($\\mu$eq L^{-1})}"))+
+  coord_cartesian(ylim = c(0, max(1e6*AllCloudData$Hplus)))
+
+
+ggsave(filename = "FigureS10.png", plot = MeasuredpHRegime,
        width = 8, height = 8)
 
-#Figure 15 RPD vs TOC ####
 
 
-## Regresion Lines
 
-IonBalancelmLinear<-lm(TOC~IonBalance, 
-                          data = subset(na.omit(AllCloudData), 
-                                        Regime == "Linear"))
-summary(IonBalancelmLinear)
-AIC(IonBalancelmLinear)
-BIC(IonBalancelmLinear)
-
-
-IonBalanceSenLinear<-theilsen(TOC~IonBalance, 
-                              data = subset(na.omit(AllCloudData), 
-                              Regime == "Linear"), nboot = 600)
-AIC(IonBalanceSenLinear)
-BIC(IonBalanceSenLinear)
-
-
-IonBalancelmNonLinear<-lm(TOC~IonBalance, data = subset(na.omit(AllCloudData), Regime == "Non-Linear"))
-summary(IonBalancelmNonLinear)
-AIC(IonBalancelmNonLinear)
-BIC(IonBalancelmNonLinear)
-
-
-IonBalanceSenNonLinear<-zyp.sen(TOC~IonBalance, 
-                             data = subset(na.omit(AllCloudData), 
-                                           Regime == "Non-Linear"))
-
-
-TOCBalance<-ggplot(na.omit(AllCloudData),aes(x= Cations-Anions, y = TOC))+
-  geom_point(aes(x= (Cations-Anions), y = TOC, color = LABPH))+
-#  geom_smooth(method = 'rlm', aes(color = "RLM"))+
- # geom_smooth(method = "rlm")+
-  geom_smooth(method = lm)+facet_grid(Regime~.)+
-  geom_abline(aes(intercept = IonBalanceSenLinear$coefficients[[1]], 
-              slope = IonBalanceSenLinear$coefficients[[2]]), 
-              size = 2, color = "red", 
-              data = AllCloudData%>%filter(Regime == "Linear"))+
-  geom_ribbon(aes(ymax = IonBalanceSen$ci))
-  geom_abline(aes(intercept = IonBalanceSenNonLinear$coefficients[[1]], 
-                  slope = IonBalanceSenNonLinear$coefficients[[2]]), 
-              size = 2, color = "red", 
-              data = AllCloudData%>%filter(Regime == "Non-Linear"))+
-  scale_color_gradientn(colors = rainbow(6))+
-  labs(color = "pH")+ylim(c(0,4000))+ylab(TeX("\\textbf{TOC ($\\mu molC $ L^{-1}$)}"))+
-  xlab(TeX("\\textbf{Cations - Anions ($\\mu eq $ L^{-1}$)}"))+
-  geom_text(aes(x = 0, y = 3000), size = 6,
-           data = AllCloudData%>%filter(Regime == "Non-Linear"),
-  label = paste("y=",signif(IonBalanceSenNonLinear$coefficients[[1]],digits = 3),"+", 
-                signif(IonBalanceSenNonLinear$coefficients[[2]],digits = 3),"x"), color = "red")+
-  geom_text(aes(x = 0, y = 3000), size = 6,
-            data = AllCloudData%>%filter(Regime == "Linear"),
-            label = paste("y=",signif(IonBalanceSenLinear$coefficients[[1]],digits = 3),"+", 
-                          signif(IonBalanceSenLinear$coefficients[[2]],digits = 3),"x"), color = "red")+
-  #geom_smooth(method = "rlm")+
- # stat_regline_equation(method = "rlm")
-  stat_regline_equation(size =6, label.x = -150, label.y = 2500,
-                        aes(label = paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")))+
-  PaperQuality()+theme(legend.position = 'right', 
-                       legend.title = element_text(size =14),
-                       strip.text.y = element_text(face = "bold", size = 14))
-
-
-ggsave(plot = TOCBalance,filename = "TOCBalance.png", width = 8, height = 8)
-
-### With HCO3
-
-IonBalancelmLinearHCO3<-lm(TOC~IonBalanceHCO3, 
-                       data = subset(na.omit(AllCloudData), 
-                                     Regime == "Linear"))
-summary(IonBalancelmLinearHCO3)
-AIC(IonBalancelmLinearHCO3)
-BIC(IonBalancelmLinearHCO3)
-
-
-IonBalanceSenLinearHCO3<-theilsen(TOC~IonBalanceHCO3, 
-                             data = subset(na.omit(AllCloudData), 
-                                           Regime == "Linear"), nboot = 10)
-AIC(IonBalanceSenLinearHCO3)
-BIC(IonBalanceSenLinearHCO3)
-
-
-IonBalancelmNonLinear<-lm(TOC~IonBalance, data = subset(na.omit(AllCloudData), Regime == "Non-Linear"))
-summary(IonBalancelmNonLinear)
-AIC(IonBalancelmNonLinear)
-BIC(IonBalancelmNonLinear)
-
-
-IonBalanceSenNonLinearHCO3<-zyp.sen(TOC~IonBalanceHCO3, 
-                             data = subset(na.omit(AllCloudData), 
-                                           Regime == "Non-Linear"))
-AIC(IonBalanceSenNonLinearHCO3)
-BIC(IonBalanceSenNonLinearHCO3)
-
-
-TOCBalanceHCO3<-ggplot(na.omit(AllCloudData),aes(x= Cations-Anions-HCO3Total, y = TOC))+
-  geom_point(aes(x= (Cations-Anions-HCO3Total), y = TOC, color = LABPH))+
-  #  geom_smooth(method = 'rlm', aes(color = "RLM"))+
-  # geom_smooth(method = "rlm")+
-  geom_smooth(method = lm)+facet_grid(Regime~.)+
-  geom_abline(aes(intercept = IonBalanceSenLinearHCO3$coefficients[[1]], 
-                  slope = IonBalanceSenLinearHCO3$coefficients[[2]]), 
-              size = 2, color = "red", 
-              data = AllCloudData%>%filter(Regime == "Linear"))+
-  geom_abline(aes(intercept = IonBalanceSenNonLinearHCO3$coefficients[[1]], 
-                  slope = IonBalanceSenNonLinearHCO3$coefficients[[2]]), 
-              size = 2, color = "red", 
-              data = AllCloudData%>%filter(Regime == "Non-Linear"))+
-  scale_color_gradientn(colors = rainbow(6))+
-  labs(color = "pH")+ylim(c(0,4000))+ylab(TeX("\\textbf{TOC ($\\mu molC $ L^{-1}$)}"))+
-  xlab(TeX("\\textbf{Cations - Anions ($\\mu eq $ L^{-1}$)}"))+
-  geom_text(aes(x = 0, y = 3000), size = 6,
-            data = AllCloudData%>%filter(Regime == "Non-Linear"),
-            label = paste("y=",signif(IonBalanceSenNonLinearHCO3$coefficients[[1]],digits = 3),"+", 
-                          signif(IonBalanceSenNonLinearHCO3$coefficients[[2]],digits = 3),"x"), color = "red")+
-  geom_text(aes(x = 0, y = 3000), size = 6,
-            data = AllCloudData%>%filter(Regime == "Linear"),
-            label = paste("y=",signif(IonBalanceSenLinearHCO3$coefficients[[1]],digits = 3),"+", 
-                          signif(IonBalanceSenLinearHCO3$coefficients[[2]],digits = 3),"x"), color = "red")+
-  #geom_smooth(method = "rlm")+
-  # stat_regline_equation(method = "rlm")
-  stat_regline_equation(size =6, label.x = -150, label.y = 2500,
-                        aes(label = paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")))+
-  PaperQuality()+theme(legend.position = 'right', 
-                       legend.title = element_text(size =14),
-                       strip.text.y = element_text(face = "bold", size = 14))
-
-
-ggsave(plot = TOCBalanceHCO3,filename = "TOCBalanceHCO3.png", width = 8, height = 8)
-
-## Figure 16. Inferred pH vs Measured pH ####
+## Figure 10. Inferred pH vs Measured pH ####
 
 InferredpH<-AllCloudData%>%
-  mutate(InferredHplus = CA+MG+1e6*10^(-LABPH))%>%
+  mutate(UpdatedInferredHplus = CA+MG+1e6*10^(-LABPH)-NO3,
+         InferredHplus = CA+MG+1e6*10^(-LABPH))%>%
   group_by(Year)%>%
   summarise(across(where(is.numeric), median, na.rm = TRUE))%>%
-  mutate(InferredpH = -log10(InferredHplus/1e6))%>% ## Convert from ueq
+  mutate(InferredpH = -log10(InferredHplus/1e6),
+         UpdatedInferredpH = -log10(UpdatedInferredHplus/1e6))%>% ## Convert from ueq
   ggplot()+
-  geom_line(aes(x= Year, y = InferredpH, fill = "Inferred pH"), color = "#F8766D", size = 4)+
+  geom_line(aes(x= Year, y = InferredpH, fill = "Inferred pH"), color = "#00BA38", size = 4)+
   geom_point(aes(x = Year, y = InferredpH, fill = "Inferred pH"), size = 4, shape = 21)+
   geom_line(aes(x= Year, y = -log10(Hplus), fill = "Measured pH"), size = 4, color = "#00C0B7")+
   geom_point(aes(x = Year, y = -log10(Hplus), fill = "Measured pH"), size = 4, shape = 21)+
-  PaperQuality()+scale_x_continuous(breaks = seq(1994, 2017, by = 4))+
+  geom_line(aes(x= Year, y = UpdatedInferredpH, fill = "NO3 Inferred pH"), color = "#F8766D", size = 4)+
+  geom_point(aes(x = Year, y = UpdatedInferredpH, fill = " NO3 Inferred pH"), size = 4, shape = 21)+
+  PaperQuality()+scale_x_continuous(breaks = seq(1994, 2022, by = 4))+
   ylab('pH')
   
   
-ggsave(plot = InferredpH, filename = "InferredpH.png",
+ggsave(plot = InferredpH, filename = "Figure10.png",
        width = 8, height = 8)
 
 
 
-# Figure 17 Acidity from TOC ####
+## Figure S11 Predicting Measured and Adjusted Acidity ####
+
+LWCSO4PlotInferrred<-ggplot(AllCloudData)+
+  geom_point(aes(x = LWC, y = InferredpH, color = SO4), size = 3)+
+  scale_color_gradientn(colors = rev(rainbow(6)),  trans= 'log10')+
+  PaperQuality()+labs(x  = TeX("\\textbf{LWC (g m$^{-3}$)}"),
+                      y = TeX("\\textbf{pH_{Drop}}"),
+                      color = TeX('\\textbf{SO$_4^{2-}$ ($\\mu$eq L^{-1})}'))+xlim(c(0.05, 1.5))+
+  theme(legend.position = 'right', legend.title = element_text(size =14))+
+  ylim(c(2,7))
 
 
-InferredpH<-ggplot(subset(AllCloudData, !is.na(TOC) & !is.na(Regime)))+
-  geom_point(aes(y = SO4+NO3-NH4,
-                 x = -log10((1e6*10^(-LABPH)+CA+MG)/1e6),
-                 color = TOC))+
-  scale_color_gradientn(colors = rainbow(6))+
-  geom_line(aes(x= -log10((1e6*10^(-LABPH)+CA+MG)/1e6),
-                y = ((1e6*10^(-LABPH)+CA+MG))),
-            linetype = "dashed", size = 2)+
-  facet_wrap(~Regime)+xlab("Inferred pH")+
-  ylab(TeX("\\textbf{(SO_4^{-2}+NO_3^-) - NH_4^+ ($\\mu eq$ L^{-1} )}"))+
-  labs(color = TeX("\\textbf{TOC $\\mu molC$ L^{-1}}"))+
-  ggtitle(TeX("\\textbf{Inferred pH vs (SO_4^{-2}+NO_3^-) - NH_4^+}"))+PaperQuality()+
-  theme(legend.position = "right", legend.title = element_text(size = 14),
-        strip.text = element_text(size = 14, face = "bold"))
+LWCSO4PlotMeasured<-ggplot(AllCloudData)+
+  geom_point(aes(x = LWC, y = LABPH, color = SO4), size = 3)+
+  scale_color_gradientn(colors = rev(rainbow(6)),  trans= 'log10')+
+  PaperQuality()+labs(x  = TeX("\\textbf{LWC (g m$^{-3}$)}"),
+                      y = TeX("\\textbf{Measured pH}"),
+                      color = TeX('\\textbf{SO$_4^{2-}$ ($\\mu$eq L^{-1})}'))+xlim(c(0.05, 1.5))+
+  theme(legend.position = 'right', legend.title = element_text(size =14))+
+  ylim(c(2,7))
 
 
 
-MeasuredpH<-ggplot(subset(AllCloudData, !is.na(TOC) & !is.na(Regime)))+
-  geom_point(aes(y = SO4+NO3-NH4,
-                 x = LABPH,
-                 color = TOC))+
-  scale_color_gradientn(colors = rainbow(6))+
-  geom_line(aes(x= LABPH,
-                y = ((1e6*10^(-LABPH)))),
-            linetype = "dashed", size = 2)+
-  facet_wrap(~Regime)+xlab("Measured pH")+
-  ylab(TeX("\\textbf{(SO_4^{-2}+NO_3^-) - NH_4^+ ($\\mu eq$ L^{-1}})"))+
-  labs(color = TeX("\\textbf{TOC $\\mu molC$ L^{-1}}"))+
-  ggtitle(TeX("\\textbf{Measured pH vs (SO_4^{-2}+NO_3^-) - NH_4^+}"))+PaperQuality()+
-  theme(legend.position = "right", legend.title = element_text(size = 14),
-        strip.text = element_text(size = 14, face = "bold"))
+LWCvsPH<-grid.arrange(LWCSO4PlotInferrred, LWCSO4PlotMeasured)
+
+ggsave("FigureS11.png", plot = LWCvsPH,  width = 8, height = 8)
 
 
-pHPlotsAll<-MeasuredpH+InferredpH&theme(legend.position = "right")
-pHPlotsAll<-pHPlotsAll+plot_layout(guides = "collect",ncol = 1)
 
-ggsave(plot = pHPlotsAll, filename = "TOCpHPlots.png", height = 10, width =10)
+
+

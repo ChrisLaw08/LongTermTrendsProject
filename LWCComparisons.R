@@ -9,11 +9,11 @@ ALSCLWC<-read_excel("WFC.2017.Met.R.xlsx", sheet = "2017 WFC METEOROLOGICAL DATA
 ALSCLWC<-filter(ALSCLWC, month(Date_Time) == 6| month(Date_Time) == 7)
 #ALSCLWC = ALSCLWC[-1,]
 
-MinuteData<-read.csv("Minute2017MetData.csv", header = TRUE)
+MinuteData<-vroom("Minute2017MetData.csv", col_names = TRUE)
 
-MinuteData<-MinuteData%>%
+Minute2017Data<-MinuteData%>%
   mutate(date = as.POSIXct(paste(Date, Time), format = "%d/%m/%Y %H:%M"))
-MinuteData<-as_tbl_time(MinuteData, index = date)
+Minute2017Data<-as_tbl_time(MinuteData, index = date)
 
 ALSCLWC<-ALSCLWC%>%
   mutate(date = Date_Time)
@@ -47,7 +47,7 @@ ggplot(subset(AllLWCData), aes(x = LWCALSC, y = LWCAWI ))+
   geom_smooth(method = lm)+
   stat_regline_equation(
     aes(label =  paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
-    formula = y~x
+    formula = y~x+0
   )
 
 JustLWC<-select(AllLWCData, c("date","LWCALSC", "LWCAWI"))
@@ -57,7 +57,7 @@ JustLWC<-select(AllLWCData, c("date","LWCALSC", "LWCAWI"))
 
 HourDataAdj<-MinuteData%>%
   collapse_by(period = "1 hourly")%>%
-  filter(CONFIRM...Value > 0.25)%>%
+  filter(`CONFIRM : Value` > 0.25)%>%
   group_by(date)%>%
   summarise(across(where(is.numeric), mean, na.rm = TRUE))%>%
   mutate(date = date +minutes(1))
@@ -67,8 +67,8 @@ HourDataAprox<-MinuteData%>%
   group_by(date)%>%
   summarise(across(where(is.numeric), mean, na.rm = TRUE))%>%
   mutate(date = date +minutes(1))%>%
-  filter(CONFIRM...Value > 0.25)%>%
-  mutate(LWCConfirm = LWC...Value/CONFIRM...Value)
+  filter(`CONFIRM : Value` > 0.25)%>%
+  mutate(LWCConfirm = `LWC : Value`/`CONFIRM : Value`)
 
 
 HourDataAdj$date<-as.character(HourDataAdj$date)
@@ -78,7 +78,7 @@ HourDataAprox$date<-as.character(HourDataAprox$date)
 HourDataJoin<-inner_join(HourDataAdj,HourDataAprox, by = "date")
 
 HourDataJoin<-HourDataJoin%>%
-  mutate(LWCAdj = LWC...Value.x, LWCAprox = LWC...Value.y)
+  mutate(LWCAdj = `LWC : Status.x`, LWCAprox = `LWC : Status.y`)
 
 
 ggplot(HourDataJoin, aes(x = LWCAdj, y = LWCAprox ))+
@@ -86,7 +86,7 @@ ggplot(HourDataJoin, aes(x = LWCAdj, y = LWCAprox ))+
   geom_smooth(method = lm)+
   stat_regline_equation(
     aes(label =  paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
-    formula = y~x+0
+    formula = y~x
   )
 
 
@@ -120,10 +120,14 @@ Hour3Calc<-Hour3Data%>%
  # filter(!is.infinite(LWCCalc))%>%
  # collapse_by(period = "3 hour")%>%
   group_by(LabID)%>%
-  filter(CLOUD_HR/60 > 0.25 & RAIN_HR/60 < 0.25)%>%
+  filter(CLOUD_HR/60 > 0.25)%>%
   mutate(LWCCalc = LWC/(CLOUD_HR/60))%>%
   summarise(across(where(is.numeric), mean, na.rm = TRUE))
   #mutate(date = date - hours(2))
+
+
+ggplot(Hour3Data)+
+  geom_density(aes(x =  RAIN_HR+CLOUD_HR))
 
 LWC3Hour<-select(Hour3Calc, c("LabID","LWCCalc", "Year", "RAIN_HR", "PSA", "WSP", "WDR", "Temperature"))
 
@@ -147,6 +151,8 @@ LWC12Hour$date<-as.character(LWC12Hour$date)
 LWCData12HourAll<-inner_join(LWCData12Hour, LWC12Hour, by = "date")
 
 LWCCalcAll<-rbind(LWCData3HourAll,LWCData12HourAll)
+
+
 
 
 #LWCCalcAll$date<-as.character(LWCCalcAll$date)
@@ -191,18 +197,14 @@ TTestAll%>%
 
 
 LWCLoadingData<-LWCCalcAll%>%
-  filter(LWCCalc < 2)%>%
-  group_by(Year.x)%>%
-  mutate(TOCCorrected = case_when(Year.x == 2018 | Year.x == 2019 ~ WSOC*(1/.8486), 
-                                  TRUE~WSOC))%>%
-  mutate(NH4Mass = NH4*LWCCalc, SO4Mass = SO4*LWCCalc, NO3Mass= NO3*LWCCalc, CAMass =  CA*LWCCalc, WSOCMass =WSOC*LWCCalc, KMass = K*LWCCalc, TOCMass = TOCCorrected*LWCCalc,
-         CLMass = CL*LWCCalc, NaMass = Sodium*LWCCalc, MGMass = MG*LWCCalc)%>%
-  summarise(across(where(is.numeric), mean, na.rm = TRUE))%>%
-  ggplot()+
-  geom_line(aes(x= Year.x, y = WSOCMass))+
-  geom_smooth(aes(x = Year.x, y = WSOCMass), method = lm)+scale_x_continuous(breaks = seq(2010,2020,2))
-
-
+  filter(LWCCalc < 2 & Year.x < 2021)%>%
+  mutate(Year = Year.x)%>%
+  select(-c(Year.x, Year.y))%>%
+  group_by(Year)%>%
+  #mutate(TOCCorrected = case_when(Year.x == 2018 | Year == 2019 ~ WSOC*(1/.8486), 
+            #                      TRUE~WSOC))%>%
+  mutate(NH4Mass = NH4*LWCCalc, SO4Mass = SO4*LWCCalc, NO3Mass= NO3*LWCCalc, CAMass =  CA*LWCCalc, WSOCMass =WSOC*LWCCalc, KMass = K*LWCCalc, TOCMass = WSOC*LWCCalc,
+         CLMass = CL*LWCCalc, NaMass = Sodium*LWCCalc, MGMass = MG*LWCCalc)
 write.csv(LWCLoadingData, "CloudLWCLoading.csv")
 
 ggplot(subset(LWCCalcAll))+
