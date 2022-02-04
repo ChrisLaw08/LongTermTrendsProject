@@ -256,7 +256,7 @@ ggsave(TOCWSOCPlot, filename = "FigureS1.png", width =8, height = 8)
 
 ## Figure S2 Minute vs Hourly Liquid Water Content ####
 
-Minute2016Data<-vroom("15-05-2016 - 30-09-2016.csv", col_names = TRUE, skip = 1, guess_max = 1e4,
+Minute2016Data<-vroom("2016MinuteData.csv", col_names = TRUE, skip = 1, guess_max = 1e4,
                       delim = ",") ### Read in the data
 
 Minute2016Data[Minute2016Data==-9999.000]<-NA
