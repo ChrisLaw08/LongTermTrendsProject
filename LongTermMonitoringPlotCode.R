@@ -1028,7 +1028,7 @@ ggsave(plot = InferredpH, filename = "Figure10.png",
 
 
 
-## Figure S11 Predicting Measured and Adjusted Acidity ####
+## Figure S11 Drop pH and Measured pH vs LWC####
 
 LWCSO4PlotInferrred<-ggplot(AllCloudData)+
   geom_point(aes(x = LWC, y = InferredpH, color = SO4), size = 3)+
