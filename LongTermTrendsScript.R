@@ -15,6 +15,12 @@ library(gt)
 
 #### Reading in the Data and make relavent calculations ####
 AllCloudData<-read.csv("Alldata.csv", header = TRUE)
+
+PaperQualityTheme<- list(theme_bw(),theme(axis.title.x = element_text(size = 12), axis.title.y = element_text(size = 12), axis.title.y.right = element_text(size = 12, color = "#3288BD"),
+                                          axis.text = element_text(size = 12), title = element_text(size = 12, face = "bold"),
+                                          legend.text = element_text(size = 10), legend.title = element_blank()))
+
+
 AllCloudData<-AllCloudData%>%
   dplyr::rename(TOC = WSOC)%>%
   filter(Year > 1993 & Year<2021)%>%
@@ -132,7 +138,7 @@ InvalidpH<-ggplot(data = subset(AllCloudData, Year < 2018 & Class == "Invalid"))
   stat_summary(aes(x = Year, y = LABPH), fun.y = "median",
                size = 3 ,color = "red", geom = "line")+
   stat_summary(aes(x = Year,group = Year, y = LABPH),fun.y ="median" ,geom = "point", 
-               size = 5, color = "black", fill = "red", shape = 21)+
+               size = 5, color = "black", fill = "red", shape = 21)+PaperQualityTheme
   theme_bw()+theme(axis.text.y = element_text(size = 18),axis.text.x = element_text(size = 18),axis.title = element_text(size = 16, face = "bold"))+
   theme(panel.border = element_blank(), axis.line = element_line(colour = "black"), title = element_text(face = "bold", size = 18))+
   scale_y_continuous(name = TeX("\\textbf{pH}"))+scale_x_continuous(breaks = seq(1994,2017,4))+
@@ -297,17 +303,61 @@ TheilSenFunction<-function(df, analytes ,fun){
     group_by(Year)%>%
     summarise(across(where(is.numeric), fun, na.rm = TRUE))
  df<-as.data.frame(df)
+ SenSlope<-list()
+ Ken<-list()
  for (i in analytes){
- print(i)
-   print(theilsen(df[,i]~Year, data = df))
-   Ken<-MannKendall(df[,i])
-   print("Mann Kendall Result")
-   print(paste("tau:", Ken$tau,"p-value:", Ken$sl))
+ #print(i)
+  # print(theilsen(df[,i]~Year, data = df))
+   SenSlope[[i]]<-theilsen(df[,i]~Year, data = df)
+   Ken[[i]]<-MannKendall(df[,i])
+   #print("Mann Kendall Result")
+   #print(paste("tau:", Ken$tau,"p-value:", Ken$sl, sep = " "))
  }
+ 
+ return(signif(SenSlope, digits = 3))
 }
 
-ValidSlope<-TheilSenFunction(subset(AllCloudData, Class == "Valid"), analytes = c("LABPH", "SPCOND", "SO4", "NO3", "NH4", "TOC", "CA", "MG", "K", 
+ValidSlope<-TheilSenFunction(subset(AllCloudData, Class == "Valid"), analytes = list("LABPH", "SPCOND", "SO4", "NO3", "NH4", "TOC", "CA", "MG", "K", 
                                                                               "Sodium", "CL", "Ratio"), fun = median)### Loops through all the analytes in a given list.
+
+
+ggplot(ValidMedians)+
+  geom_line(aes(x = Year, y = SO4), color = "red",size = 4)+
+  geom_point(aes(x = Year, y = SO4, fill = "SO4"), size = 4, shape = 21)+
+  geom_smooth(aes(x = Year, y = SO4, color = "SO4"), method = sen, size =2)+
+  geom_line(aes(x = Year, y = NO3),color = "blue", size = 4)+
+  geom_point(aes(x = Year, y = NO3, fill = "NO3"), size = 4, shape = 21)+
+  geom_smooth(aes(x = Year, y = NO3, color = "NO3"), method = sen, size = 2)+
+  geom_line(aes(x = Year, y = NH4), color = "orange", size = 4)+
+  geom_point(aes(x = Year, y = NH4, fill = "NH4"), size = 4, shape = 21)+
+  geom_smooth(aes(x = Year, y = NH4, color = "NH4"), method = sen, size = 2)+
+  geom_line(aes(x = Year, y = TOC/4),color = "forest green",size = 4)+
+  geom_point(aes(x = Year, y = TOC/4, fill = "TOC"), size = 4, shape =21)+
+  geom_smooth(aes(x = Year, y = TOC/4, color = "TOC"), method = sen, size = 2)+
+  scale_x_continuous(breaks = seq(1994, 2018, by = 4))+scale_y_continuous(guide = guide_axis(check.overlap = TRUE),sec.axis = sec_axis(trans = ~.x*4, name = TeX("\\textbf{TOC Concentration ($\\mu molC $ L^{-1}$)}")),
+                                                                          name =TeX("\\textbf{$Ion Concentration$ ($\\mu eq $ L^{-1}$)}"))+
+  scale_fill_manual(values = c("SO4" = "red", "NO3" = "blue", "NH4" = 'orange', "TOC" = "forest green"))+
+  scale_color_manual(values = c("SO4" = "red", "NO3" = "blue", "NH4" = 'orange', "TOC" = "forest green"), guide = FALSE)+
+  PaperQuality()+theme(axis.text.y.right = element_text(color = "forest green"),
+                       axis.ticks = element_line(color = "forest green"), axis.title.y.right = element_text(color = "forest green"))+
+  annotate(geom = 'text',x = 2010, y = 200, size = 6,
+           label = paste("y=",signif(ValidSlope$SO4$coefficients[[2]],digits = 3),"x +", signif(ValidSlope$SO4$coefficients[[1]], digits = 3)), color = "red")+
+  annotate(geom = 'text',x = 2010, y = 190, size = 6,
+           label = paste("y=",signif(ValidSlope$NH4$coefficients[[2]], digits = 3),"x +", signif(ValidSlope$NH4$coefficients[[1]], digits = 3)), color = "orange")+
+  annotate(geom = 'text',x = 2010, y = 180, size = 6,
+           label = paste("y=",signif(ValidSlope$NO3$coefficients[[2]], digits = 3),"x +", signif(ValidSlope$NO3$coefficients[[1]], digits = 3)), color = "blue")+
+  annotate(geom = 'text',x = 2010, y = 170, size = 6,
+           label = paste("y=",signif(ValidSlope$TOC$coefficients[[2]], digits = 3),"x", signif(ValidSlope$TOC$coefficients[[1]], digits = 3), sep = ""), color = "forest green")
+  
+
+  
+  
+  
+
+
+
+
+
 InvalidSlope<-TheilSenFunction(subset(AllCloudData, Class == "Invalid"), analytes = c("LABPH", "SPCOND", "SO4", "NO3", "NH4", "TOC", "CA", "MG", "K", 
                                                                                     "Sodium", "CL", "Ratio"), fun = median)
 AllSlope<-TheilSenFunction(subset(AllCloudData, Year >2008), analytes = c("LABPH", "SPCOND", "SO4", "NO3", "NH4", "TOC", "CA", "MG", "K", 
@@ -322,7 +372,10 @@ AllCloudData%>%
   dplyr::select(c(Class,LABPH:TOC))%>%
   pivot_longer(cols = !Class, names_to = "Species", values_to = "Conc")%>%
   group_by(Species)%>%
-  kruskal_test(Conc~Class)
+  kruskal_test(Conc~Class)%>%
+  gt()
+
+
 
 
 DunnTestbyClass<-AllCloudData%>%
@@ -362,8 +415,6 @@ DunnTestbyClass%>%
   mutate(across(where(is.numeric), round, digits = 3))%>%
   gt()
   
-
-
 
 #### Regime Statistical Tests ####
 AllCloudData%>%
@@ -580,12 +631,14 @@ Loading2015<-LWCLoadingData%>%
   geom_point(aes(x= date, y = TOCMass, color = "TOC"))+
   geom_point(aes(x= date, y = KMass*80, color = "K"))
 
-LWCLoadingData%>%
-#  filter(K/CA > 0)%>%
-  filter(Year == 2018)%>%
-  ggplot()+
-  geom_point(aes(x= date, y = K/WSOC, color = "TOC"))
-  #geom_point(aes(x= date, y = (K/CA)*1000, color = "K"))
+ggplot(LWCLoadingData,aes(x= LWC, y = LWCCalc))+
+  geom_point(aes(x= LWC, y = LWCCalc))+
+  ylab("Recalculated LWC")+xlab("ASLC Reported LWC")+
+  geom_smooth(aes(x = LWC, y = LWCCalc), method = lm, formula = y~x+0)+
+  geom_abline(slope = 1, intercept = 0, size = 2)+
+  stat_regline_equation(aes(label =paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")), formula = y~x+0)+
+  stat_regline_equation(aes(label =paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")), formula = y~x)
+  
 
 
 
