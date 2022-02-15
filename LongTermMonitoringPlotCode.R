@@ -584,7 +584,7 @@ LWCLoadingData<-LWCLoadingData%>%
   mutate(LWCBin = cut(LWC, breaks = seq(0.1, 1, .05),
                           include.lowest = TRUE),
          TIC = Cations+Anions)%>%
-  filter(!is.na(LWCCalcBin))%>%
+  #filter(!is.na(LWCCalcBin))%>%
   mutate(InferredpH = -log10(10^(-LABPH)+(CA+MG)/1e6),
          InferredBin = cut(InferredpH, breaks = seq (2, 5, .5)))
 
@@ -641,8 +641,12 @@ CWLMassPlots<-ggplot(CWLMedians)+
   geom_smooth(aes(x = Year, y = NH4Mass, color = "NH4"), method = sen, size = 2, se = FALSE)+
   geom_line(aes(x = Year, y = TOCMass/4),color = "forest green",size = 4)+
   geom_point(aes(x = Year, y = TOCMass/4, fill = "TOC"), size = 4, shape =21)+
-  geom_smooth(aes(x = Year, y = TOCMass/4, color = "TOC"), method = sen, size = 2, se = FALSE)+
-  scale_x_continuous(breaks = seq(2010, 2022, by = 4))+scale_y_continuous(guide = guide_axis(check.overlap = TRUE),sec.axis = sec_axis(trans = ~.x*4, name = TeX("\\textbf{TOC Concentration (nmolC m^{-3})}")),
+  geom_abline(color = "forest green",  slope = 1.0055, intercept = -1985, size = 2)+
+  #geom_smooth(aes(x = Year, y = TOCMass/4, color = "TOC"), method = sen, size = 2, se = FALSE)+
+  scale_x_continuous(breaks = seq(2010, 2022, by = 4))+
+  scale_y_continuous(guide = guide_axis(check.overlap = TRUE),
+                     sec.axis = sec_axis(trans = ~.x*4, 
+                                         name = TeX("\\textbf{TOC Concentration (nmolC m^{-3})}")),
                                                                           name =TeX("\\textbf{Ion CWL (neq  m^{-3}$)}"))+
   scale_fill_manual(values = c("SO4" = "red", "NO3" = "blue", "NH4" = 'orange', "TOC" = "forest green"))+
   scale_color_manual(values = c("SO4" = "red", "NO3" = "blue", "NH4" = 'orange', "TOC" = "forest green"), guide = FALSE)+
@@ -664,7 +668,8 @@ CWLMassPlots<-ggplot(CWLMedians)+
 
 
 
-CWLPlots<-ggarrange(CWLMassPlots, CWLTable, nrow = 1, ncol = 2)
+CWLPlots<-ggarrange(CWLMassPlots, CWLTable, nrow = 1, ncol = 2,
+                    heights = c(1, 10), widths = c(2,1))
 
 
 ggsave(plot = CWLPlots, filename = "Figure7.png",width = 12, height = 6)
