@@ -732,12 +732,12 @@ CWLMassPlots<-ggplot(CWLMedians)+
   scale_x_continuous(breaks = seq(2010, 2022, by = 4))+
   scale_y_continuous(guide = guide_axis(check.overlap = TRUE),
                      sec.axis = sec_axis(trans = ~.x, 
-                                         name = TeX("\\textbf{TOC Concentration ($\\mu$g C m^{-3})}")),
+                                         name = TeX("\\textbf{TOC CWL ($\\mu$g C m^{-3})}")),
                                                                           name =TeX("\\textbf{Ion CWL ($\\mu$g m^{-3}$)}"))+
   scale_fill_manual(values = c("SO4" = "red", "NO3" = "blue", "NH4" = 'orange', "TOC" = "forest green"))+
   scale_color_manual(values = c("SO4" = "red", "NO3" = "blue", "NH4" = 'orange', "TOC" = "forest green"), guide = FALSE)+
   PaperQuality()+theme(axis.text.y.right = element_text(color = "forest green"),
-                       axis.ticks = element_line(color = "forest green"), axis.title.y.right = element_text(color = "forest green", size = 15))+
+                       axis.ticks = element_line(color = "forest green"), axis.title.y.right = element_text(color = "forest green", size = 18))+
   annotate(geom = 'text',x = 2012, y = 3.2, size = 6,
            label = paste("y=",signif(CWLSlope$Slope[CWLSlope$Analyte=="SO4 (ug/m^3 yr)"][[1]]*(96/2000),digits = 3),"x +", 
                          signif(CWLSlope$Intercept[CWLSlope$Analyte=="SO4 (ug/m^3 yr)"][[1]]*(96/2000), digits = 3)), color = "red")+
