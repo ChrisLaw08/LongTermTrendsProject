@@ -50,16 +50,15 @@ AllCloudData<-AllCloudData%>%
   mutate(Hplus = 10^(-LABPH))%>%
   mutate(SurplusNH4 = NH4-NO3-SO4,
          NH4Surplus = ifelse(NH4 > NO3+SO4, 'Yes', 'No'),
-         FineModeHplus = SO4+NO3-NH4)%>%
+         BUHplus = SO4+NO3-NH4)%>%
   mutate(HCO3Gas = 1e6*(3.4*10^(-2)*410*10^(-6)*10^(-6.36))/Hplus)%>%##Gas phase HCO3
   #mutate(HCO3Fraction = (Hplus*10^(-6.3))/(Hplus^2 + Hplus*10^(-6.36) + 10^(-6.36-10.36)))%>%##Ionizations Fraction of HCO3
   #mutate(HCO3Total = (HCO3Fraction*(MG+CA)/2) + 1e6*HCO3Gas,
   mutate(pHBin = cut(LABPH, 6))%>%
   mutate(IonBalance = Cations-Anions,
          IonBalanceHCO3 = Cations - Anions -HCO3Gas,
-         DroppH = -log10(10^(-LABPH)+(CA+MG)/1e6),
-         DropHplus = CA+MG+Hplus*1e6,
-         InferredBin = cut(DroppH, breaks = seq (2, 5, .5)),
+         TDpH = -log10(10^(-LABPH)+(CA+MG)/1e6),
+         TDHplus = CA+MG+Hplus*1e6,
          LWC = ifelse(is.na(LWC), LWCNew, LWC))
 
 ### Create Median Trends Separated by Valid and All Data ####
@@ -579,7 +578,7 @@ SurplusNH4<-ggplot(data = subset(AllCloudData))+
   geom_hline(yintercept = 0, size =3)+
   theme_bw()+theme(axis.text.y = element_text(size = 18),axis.text.x = element_text(size = 18),axis.title = element_text(size = 16, face = "bold"))+
   theme(panel.border = element_blank(), axis.line = element_line(colour = "black"), title = element_text(face = "bold", size = 18))+
-  scale_y_continuous(name = TeX("\\textbf{Concentrations ($\\mu eq $L^{-1}$)}"))+scale_x_continuous(breaks = seq(1994,2022,4))+
+  scale_y_continuous(name = TeX("\\textbf{Ion Concentrations ($\\mu eq $L^{-1}$)}"))+scale_x_continuous(breaks = seq(1995,2020,5))+
   ggtitle(TeX('\\textbf{H^+ and NH_4^+ Neutralization}'))+
   annotate(x = 2010, y = -75, geom = "text", label = TeX("\\textbf{NH_4^+ - SO_4^{-2} - NO_3^-}"), color = "blue", size = 6)+
   annotate(x = 2010, y = 75, geom = "text", label = TeX("\\textbf{H^+}"), color = 'red', size = 6)
@@ -592,7 +591,7 @@ CationAnion<-ggplot(data = subset(AllMedians))+
 
   theme_bw()+theme(axis.text.y = element_text(size = 18),axis.text.x = element_text(size = 18),axis.title = element_text(size = 16, face = "bold"))+
   theme(panel.border = element_blank(), axis.line = element_line(colour = "black"), title = element_text(face = "bold", size = 18))+
-  scale_y_continuous(name = TeX("\\textbf{Cations/Anions}"))+scale_x_continuous(breaks = seq(1994,2022,4))+
+  scale_y_continuous(name = TeX("\\textbf{Cations/Anions}"))+scale_x_continuous(breaks = seq(1995,2020,5))+
   ggtitle('Cation/Anion Ratio')+
   annotate(geom = 'text',x = 1998, y = 1.4, size = 6,
            label = paste("y=",signif(AllSlope$Slope[AllSlope$Analyte=="Ratio"][[1]],digits = 3),"x +", 
@@ -679,11 +678,22 @@ ggsave(plot = BinData, filename = "FigureS5.png", width = 12, height = 16)
 
 CWLSlope<-TheilSenFunction(LWCLoadingData, analytes = list("LWCCalc","SO4Mass", "NO3Mass", "NH4Mass", "TOCMass", "CAMass", "MGMass", "KMass", 
                                                            "NaMass", "CLMass"), fun = median)
-CWLSlope$Analyte<-c("LWC (g/m^3 yr)","SO4 (neq/m^3 yr)","NO3 (neq/m^3 yr)", "NH4 (neq/m^3 yr)", "TOC (nmolC/m^3 yr)", "Ca (neq/m^3 yr)", "Mg (neq/m^3 yr)", "K (neq/m^3 yr)", "Na (neq/m^3 yr)", "Cl (neq/m^3 yr)")
+CWLSlope$Analyte<-c("LWC (g/m^3 yr)","SO4 (ug/m^3 yr)","NO3 (ug/m^3 yr)", "NH4 (ug/m^3 yr)", "TOC (ug/m^3 yr)", "Ca (ug/m^3 yr)", 
+                    "Mg (ug/m^3 yr)", "K (ug/m^3 yr)", "Na (ug/m^3 yr)", "Cl (ug/m^3 yr)")
 CWLNoInter<-CWLSlope%>%
   dplyr::select(-Intercept)%>%
   mutate(`P-Value` = as.numeric(`P-Value`))%>%
-  mutate(`P-Value` = ifelse(`P-Value` < 1e-3, "p < 0.001", `P-Value`))
+  mutate(`P-Value` = ifelse(`P-Value` < 1e-3, "p < 0.001", `P-Value`))%>%
+  mutate(Slope = case_when(Analyte == "SO4 (ug/m^3 yr)"~signif(as.numeric(Slope) *(96/2000),digits = 3),
+                           Analyte == "NO3 (ug/m^3 yr)"~signif(as.numeric(Slope)*(62/1000), digits = 3),
+                           Analyte == "NH4 (ug/m^3 yr)"~signif(as.numeric(Slope)*(18/1000), digits = 3),
+                           Analyte == "TOC (ug/m^3 yr)"~signif(as.numeric(Slope)*(12/1000), digits = 3),
+                           Analyte == "Ca (ug/m^3 yr)"~signif(as.numeric(Slope)*(40.078/2000), digits = 3),
+                           Analyte == "Mg (ug/m^3 yr)"~signif(as.numeric(Slope)*(24.305/2000), digits = 3),
+                           Analyte == "K (ug/m^3 yr)"~signif(as.numeric(Slope)*(39.0983 /1000), digits = 3),
+                           Analyte == "Na (ug/m^3 yr)"~signif(as.numeric(Slope)*(22.98/1000), digits = 3),
+                           Analyte == "Cl (ug/m^3 yr)"~signif(as.numeric(Slope)*(35.453/1000),digits = 3),
+                           Analyte == "LWC (g/m^3 yr)"~signif(as.numeric(Slope), digits =3)))
   
 CWLTable<-ggtexttable(CWLNoInter, theme = ttheme("light", base_size = 16, colnames.style = colnames_style(face = "italic", size = 16)), rows = NULL)%>%
   tab_add_title(text = paste("Theil-Sen Slope and",
@@ -699,48 +709,47 @@ CWLMedians<-LWCLoadingData%>%
                                      .names = "{.col}.{.fn}"))
 
 CWLMassPlots<-ggplot(CWLMedians)+
-  geom_errorbar(aes(x = Year, ymin = SO4Mass.median - SO4Mass.std.error, ymax = SO4Mass.median + SO4Mass.std.error),
+  geom_errorbar(aes(x = Year, ymin = (SO4Mass.median - SO4Mass.std.error)*(96/2000), ymax = (SO4Mass.median + SO4Mass.std.error)*(96/2000)),
                 color = 'red')+
-  geom_line(aes(x = Year, y = SO4Mass.median), color = "red",size = 4)+
-  geom_point(aes(x = Year, y = SO4Mass.median, fill = "SO4"), size = 4, shape = 21)+
-  geom_smooth(aes(x = Year, y = SO4Mass.median, color = "SO4"), method = sen, size =2, se = FALSE)+
-  geom_errorbar(aes(x = Year, ymin = NO3Mass.median - NO3Mass.std.error, ymax = NO3Mass.median + NO3Mass.std.error),
+  geom_line(aes(x = Year, y = 96*SO4Mass.median/2000), color = "red",size = 4)+
+  geom_point(aes(x = Year, y = 96*SO4Mass.median/2000, fill = "SO4"), size = 4, shape = 21)+
+  geom_smooth(aes(x = Year, y = 96*SO4Mass.median/2000, color = "SO4"), method = sen, size =2, se = FALSE)+
+  geom_errorbar(aes(x = Year, ymin = (NO3Mass.median - NO3Mass.std.error)*(62/1000), ymax = (NO3Mass.median + NO3Mass.std.error)*(62/1000)),
                 color = 'blue')+
-  geom_line(aes(x = Year, y = NO3Mass.median),color = "blue", size = 4)+
-  geom_point(aes(x = Year, y = NO3Mass.median, fill = "NO3"), size = 4, shape = 21)+
-  geom_smooth(aes(x = Year, y = NO3Mass.median, color = "NO3"), method = sen, size = 2, se = FALSE)+
-  geom_errorbar(aes(x = Year, ymin = NH4Mass.median - NH4Mass.std.error, ymax = NH4Mass.median + NH4Mass.std.error),
+  geom_line(aes(x = Year, y = 62*NO3Mass.median/1000),color = "blue", size = 4)+
+  geom_point(aes(x = Year, y = 62*NO3Mass.median/1000, fill = "NO3"), size = 4, shape = 21)+
+  geom_smooth(aes(x = Year, y = 62*NO3Mass.median/1000, color = "NO3"), method = sen, size = 2, se = FALSE)+
+  geom_errorbar(aes(x = Year, ymin = (NH4Mass.median - NH4Mass.std.error)*(18/1000), ymax = (NH4Mass.median + NH4Mass.std.error)*(18/1000)),
                 color = 'orange')+
-  geom_line(aes(x = Year, y = NH4Mass.median), color = "orange", size = 4)+
-  geom_point(aes(x = Year, y = NH4Mass.median, fill = "NH4"), size = 4, shape = 21)+
-  geom_smooth(aes(x = Year, y = NH4Mass.median, color = "NH4"), method = sen, size = 2, se = FALSE)+
-  geom_errorbar(aes(x = Year, ymin = TOCMass.median/4 - TOCMass.std.error/4, ymax = TOCMass.median/4 + TOCMass.std.error/4),
+  geom_line(aes(x = Year, y = 18*NH4Mass.median/1000), color = "orange", size = 4)+
+  geom_point(aes(x = Year, y = 18*NH4Mass.median/1000, fill = "NH4"), size = 4, shape = 21)+
+  geom_smooth(aes(x = Year, y = 18*NH4Mass.median/1000, color = "NH4"), method = sen, size = 2, se = FALSE)+
+  geom_errorbar(aes(x = Year, ymin = (TOCMass.median - TOCMass.std.error)*(12/1000), ymax = (TOCMass.median + TOCMass.std.error)*(12/1000)),
                   color = 'forest green')+
-  geom_line(aes(x = Year, y = TOCMass.median/4),color = "forest green",size = 4)+
-  geom_point(aes(x = Year, y = TOCMass.median/4, fill = "TOC"), size = 4, shape =21)+
-  geom_abline(color = "forest green",  slope = 1.0055, intercept = -1985, size = 2)+ ### Needed to be adjusted to make there regression line go through the points properly
-  #geom_smooth(aes(x = Year, y = TOCMass/4, color = "TOC"), method = sen, size = 2, se = FALSE)+
+  geom_line(aes(x = Year, y = 12*TOCMass.median/1000),color = "forest green",size = 4)+
+  geom_point(aes(x = Year, y = 12*TOCMass.median/1000, fill = "TOC"), size = 4, shape =21)+
+  geom_smooth(aes(x = Year, y = TOCMass.median*(12/1000), color = 'TOC'),se = FALSE, method = sen, size =2)+### Needed to be adjusted to make there regression line go through the points properly
   scale_x_continuous(breaks = seq(2010, 2022, by = 4))+
   scale_y_continuous(guide = guide_axis(check.overlap = TRUE),
-                     sec.axis = sec_axis(trans = ~.x*4, 
-                                         name = TeX("\\textbf{TOC Concentration (nmolC m^{-3})}")),
-                                                                          name =TeX("\\textbf{Ion CWL (neq  m^{-3}$)}"))+
+                     sec.axis = sec_axis(trans = ~.x, 
+                                         name = TeX("\\textbf{TOC Concentration ($\\mu$g C m^{-3})}")),
+                                                                          name =TeX("\\textbf{Ion CWL ($\\mu$g m^{-3}$)}"))+
   scale_fill_manual(values = c("SO4" = "red", "NO3" = "blue", "NH4" = 'orange', "TOC" = "forest green"))+
   scale_color_manual(values = c("SO4" = "red", "NO3" = "blue", "NH4" = 'orange', "TOC" = "forest green"), guide = FALSE)+
   PaperQuality()+theme(axis.text.y.right = element_text(color = "forest green"),
                        axis.ticks = element_line(color = "forest green"), axis.title.y.right = element_text(color = "forest green", size = 15))+
-  annotate(geom = 'text',x = 2012, y = 80, size = 6,
-           label = paste("y=",signif(CWLSlope$Slope[CWLSlope$Analyte=="SO4 (neq/m^3 yr)"][[1]],digits = 3),"x +", 
-                         signif(CWLSlope$Intercept[CWLSlope$Analyte=="SO4 (neq/m^3 yr)"][[1]], digits = 3)), color = "red")+
-  annotate(geom = 'text',x = 2012, y = 72, size = 6,
-           label = paste("y=",signif(CWLSlope$Slope[CWLSlope$Analyte=="NH4 (neq/m^3 yr)"][[1]],digits = 3),"x +", 
-                         signif(CWLSlope$Intercept[CWLSlope$Analyte=="NH4 (neq/m^3 yr)"][[1]], digits = 3)), color = "orange")+
-  annotate(geom = 'text',x = 2012, y = 64, size = 6,
-           label = paste("y=",signif(CWLSlope$Slope[CWLSlope$Analyte=="NO3 (neq/m^3 yr)"][[1]],digits = 3),"x +", 
-                         signif(CWLSlope$Intercept[CWLSlope$Analyte=="NO3 (neq/m^3 yr)"][[1]], digits = 3)), color = "blue")+
-  annotate(geom = 'text',x = 2012, y = 56, size = 6,
-           label = paste("y=",signif(CWLSlope$Slope[CWLSlope$Analyte=="TOC (nmolC/m^3 yr)"][[1]],digits = 3),"x +", 
-                         signif(CWLSlope$Intercept[CWLSlope$Analyte=="TOC (nmolC/m^3 yr)"][[1]], digits = 3)), color = "forest green")+
+  annotate(geom = 'text',x = 2012, y = 3.2, size = 6,
+           label = paste("y=",signif(CWLSlope$Slope[CWLSlope$Analyte=="SO4 (ug/m^3 yr)"][[1]]*(96/2000),digits = 3),"x +", 
+                         signif(CWLSlope$Intercept[CWLSlope$Analyte=="SO4 (ug/m^3 yr)"][[1]]*(96/2000), digits = 3)), color = "red")+
+  annotate(geom = 'text',x = 2012, y = 3.0, size = 6,
+           label = paste("y=",signif(CWLSlope$Slope[CWLSlope$Analyte=="NH4 (ug/m^3 yr)"][[1]]*(18/1000),digits = 3),"x +", 
+                         signif(CWLSlope$Intercept[CWLSlope$Analyte=="NH4 (ug/m^3 yr)"][[1]]*(18/1000), digits = 3)), color = "orange")+
+  annotate(geom = 'text',x = 2012, y = 2.8, size = 6,
+           label = paste("y=",signif(CWLSlope$Slope[CWLSlope$Analyte=="NO3 (ug/m^3 yr)"][[1]]*(62/1000),digits = 3),"x +", 
+                         signif(CWLSlope$Intercept[CWLSlope$Analyte=="NO3 (ug/m^3 yr)"][[1]]*(62/1000), digits = 3)), color = "blue")+
+  annotate(geom = 'text',x = 2012, y = 2.6, size = 6,
+           label = paste("y=",signif(CWLSlope$Slope[CWLSlope$Analyte=="TOC (ug/m^3 yr)"][[1]]*(12/1000),digits = 3),"x +", 
+                         signif(CWLSlope$Intercept[CWLSlope$Analyte=="TOC (ug/m^3 yr)"][[1]]*(12/1000), digits = 3)), color = "forest green")+
   ggtitle("Major Analytes")
 
 
@@ -839,7 +848,8 @@ HCondPlot<-ggplot(subset(AllCloudData, !is.na(HCond/SPCOND) & HCond/SPCOND >= 0 
   geom_abline(slope = -1, intercept = 6, linetype ='dashed', size =2)+
   scale_y_log10(limits =c(1,1000),
                 name = TeX('\\textbf{Conductivity ($\\mu S$ cm^{-1})}'))+
-  labs(color = TeX("\\textbf{R_{Cond} Fraction}"))+PaperQuality()+
+  labs(color = TeX("\\textbf{R_{Cond}}"))+PaperQuality()+
+  ggtitle('a)')+
   theme(legend.position = "right",
                        legend.title = element_text(size = 20),legend.text = element_text(size = 20),
         axis.title.y = element_text(size = 22), axis.text.x = element_text(size = 22),
@@ -848,13 +858,6 @@ HCondPlot<-ggplot(subset(AllCloudData, !is.na(HCond/SPCOND) & HCond/SPCOND >= 0 
 
 ggsave(plot = HCondPlot, filename = "Figure7a.png", 
        height = 6, width = 10)
-
-
-AllCloudData%>%
-  group_by(Year)%>%
-  summarise(across(where(is.numeric), median,na.rm = TRUE))%>%
-  select(Year, HCond)%>%
-  tail()
 
 ## Figure 7b Percent in the New Regime #### 
 
@@ -876,12 +879,13 @@ PercentRegime<-PercentRegime[seq(2, nrow(PercentRegime), by =2),] ##Filters out 
 PercentPlotRegime<-ggplot(PercentRegime)+
   geom_line(aes(Year, y = Percent), color = 'red', size = 4)+
   geom_point(aes(Year, y = Percent), fill = "red", shape = 21, size = 4)+
-  PaperQuality()+scale_y_continuous(TeX('\\textbf{Percent Non-Linear (%)}'))+scale_x_continuous(breaks = seq(1994, 2022, 4))+
+  PaperQuality()+scale_y_continuous(TeX('\\textbf{Percent Non-Linear (%)}'))+scale_x_continuous(breaks = seq(1995, 2022, 5))+
+  ggtitle("b)")+
   theme(axis.title.y = element_text(size = 20), axis.title.x = element_text(size = 20), axis.text.x = element_text(size = 20), axis.text.y = element_text(size =20))
 
 CondandPerc<-grid.arrange(HCondPlot,PercentPlotRegime, ncol = 2)
 
-ggsave(CondandPerc, filename = "Figure7b.png", width =20, height = 6)
+ggsave(CondandPerc, filename = "Figure7.png", width =20, height = 6)
 
 
 ## Table 1. Regime Dunn Test ####
@@ -1040,31 +1044,31 @@ ggsave(filename = "FigureS9.png", plot = AllAerosolPlots, width = 10, height = 1
 
 
 
-## Figure 8. Inferred pH vs Measured pH ####
+## Figure 8. Drop BU and Drop TD pH vs Measured pH ####
 
 
 
-InferredpH<-AllCloudData%>%
-  mutate(DropHplus = CA+MG+1e6*10^(-LABPH),
-         FineHplus = SO4+NO3-NH4)%>%
+TDBUpH<-AllCloudData%>%
+  mutate(TDHplus = CA+MG+1e6*10^(-LABPH),
+         BUHplus = (SO4+NO3-NH4)*1e-6)%>%
   group_by(Year)%>%
   summarise(across(where(is.numeric), median, na.rm = TRUE))%>%
-  mutate(FinepH = -log10(FineHplus*1e-6))%>% ## Convert from ueq
+  mutate(TDpH = -log10(TDHplus*1e-6))%>% ## Convert from ueq
   ggplot()+
-  geom_line(aes(x= Year, y = DroppH, color = "Drop pH",
+  geom_line(aes(x= Year, y = TDpH, color = "pH TD",
                 ), show.legend = FALSE,size = 4)+
-  geom_point(aes(x = Year, y = DroppH, fill = "Drop pH"), size = 4, shape = 21)+
+  geom_point(aes(x = Year, y = TDpH, fill = ("pH TD")), size = 4, shape = 21)+
   geom_line(aes(x= Year, y = -log10(Hplus), color = "Measured pH"), 
             size = 4, show.legend = FALSE)+
   geom_point(aes(x = Year, y = -log10(Hplus), fill = "Measured pH"), size = 4,color = 'black', shape = 21)+
-  geom_line(aes(x= Year, y = FinepH, color = "Fine Mode pH"), 
+  geom_line(aes(x= Year, y = -log10(BUHplus), color = "pH BU"), 
             size = 4, show.legend = FALSE)+
-  geom_point(aes(x = Year, y = FinepH, fill = "Fine Mode pH"), size = 4,color = 'black', shape = 21)+
-  PaperQuality()+scale_x_continuous(breaks = seq(1994, 2022, by = 4))+
+  geom_point(aes(x = Year, y = -log10(BUHplus), fill = "pH BU"), size = 4,color = 'black', shape = 21)+
+  PaperQuality()+scale_x_continuous(breaks = seq(1995, 2020, by = 5))+
   ylab('pH')
   
   
-ggsave(plot = InferredpH, filename = "Figure8.png",
+ggsave(plot = TDBUpH, filename = "Figure8.png",
        width = 8, height = 8)
 
 
@@ -1097,28 +1101,28 @@ PercentNH4SurplusPlot<-ggplot(PercentNH4Surplus)+
 
 ##  Figure 9b) and 9c Measured H+ vs Predicted H+ ####
 
-LinearCloudTS<-theilsen(Hplus~FineModeHplus, data = AllCloudData%>%filter(NH4< SO4+NO3 & Regime =='Linear')%>%
+LinearCloudTS<-theilsen(Hplus~BUHplus, data = AllCloudData%>%filter(NH4< SO4+NO3 & Regime =='Linear')%>%
                           mutate(Hplus = 1e6*10^(-LABPH)))
-NonLinearCloudTS<-theilsen(Hplus~FineModeHplus, data = AllCloudData%>%filter(NH4< SO4+NO3 & Regime =='Non-Linear')%>%
+NonLinearCloudTS<-theilsen(Hplus~BUHplus, data = AllCloudData%>%filter(NH4< SO4+NO3 & Regime =='Non-Linear')%>%
                              mutate(Hplus = 1e6*10^(-LABPH)))
-LinearCloudAdjustTS<-theilsen(DropHplus~FineModeHplus, data = AllCloudData%>%filter(NH4< SO4+NO3 & Regime =='Linear')%>%
+LinearCloudAdjustTS<-theilsen(TDHplus~BUHplus, data = AllCloudData%>%filter(NH4< SO4+NO3 & Regime =='Linear')%>%
                                 mutate(Hplus = 1e6*10^(-LABPH)))
-NonLinearCloudAdjustTS<-theilsen(DropHplus~FineModeHplus, data = AllCloudData%>%filter(NH4< SO4+NO3 & Regime =='Non-Linear')%>%
+NonLinearCloudAdjustTS<-theilsen(TDHplus~BUHplus, data = AllCloudData%>%filter(NH4< SO4+NO3 & Regime =='Non-Linear')%>%
                                    mutate(Hplus = 1e6*10^(-LABPH)))
 
 MeasuredLinearpHRegime<-ggplot(subset(AllCloudData, Regime == "Linear" & SO4+NO3>NH4))+
   geom_point(aes(x = NO3+SO4-NH4, y = CA+MG+(1e6*10^(-LABPH)), 
-                 color = "Drop H+"), size = 3)+
+                 color = "H+ TD"), size = 3)+
   geom_point(aes(x = NO3+SO4-NH4, y = (1e6*10^(-LABPH)), 
                  color = 'Measured H+'), size = 3)+
   geom_abline(aes(slope = LinearCloudTS$coefficients[[2]], intercept = LinearCloudTS$coefficients[[1]], color = 'Measured H+'),
               size = 2, show.legend = FALSE)+
-  geom_abline(aes(slope = LinearCloudAdjustTS$coefficients[[2]], intercept = LinearCloudAdjustTS$coefficients[[1]], color = 'Drop H+'),
+  geom_abline(aes(slope = LinearCloudAdjustTS$coefficients[[2]], intercept = LinearCloudAdjustTS$coefficients[[1]], color = "H+ TD"),
               size = 2, show.legend = FALSE)+
   geom_abline(slope =1 , intercept = 0, linetype = 'dashed', size = 2)+
   annotate(geom = 'text',x = 900, y = 2900, size = 8,
            label = paste("y=",format(round(LinearCloudTS$coefficients[[2]], digits = 2),nsmall = 2),"x + ",round(LinearCloudTS$coefficients[[1]], digits = 3)),
-           color = "#00BFC4")+
+           color ="#00BFC4")+
   annotate(geom = 'text',x = 900, y = 2600, size = 8,
            label = paste("y=",round(LinearCloudAdjustTS$coefficients[[2]], digits = 2),"x + ",round(LinearCloudAdjustTS$coefficients[[1]], digits = 3)),
            color = "#F8766D")+
@@ -1129,20 +1133,20 @@ MeasuredLinearpHRegime<-ggplot(subset(AllCloudData, Regime == "Linear" & SO4+NO3
 
 MeasuredNonLinearpHRegime<-ggplot(subset(AllCloudData, Regime == 'Non-Linear' & SO4+NO3>NH4))+
   geom_point(aes(x = NO3+SO4-NH4, y = CA+MG+(1e6*10^(-LABPH)), 
-                 color = "Drop H+"), size = 3)+
+                 color = "H+ TD"), size = 3)+
   geom_point(aes(x = NO3+SO4-NH4, y = (1e6*10^(-LABPH)), 
                  color = 'Measured H+'), size = 3)+
   geom_abline(aes(slope = NonLinearCloudTS$coefficients[[2]], intercept = NonLinearCloudTS$coefficients[[1]], color = 'Measured H+'),
               size = 2, show.legend = FALSE)+
-  geom_abline(aes(slope = NonLinearCloudAdjustTS$coefficients[[2]], intercept = NonLinearCloudAdjustTS$coefficients[[1]], color = 'Drop H+'),
+  geom_abline(aes(slope = NonLinearCloudAdjustTS$coefficients[[2]], intercept = NonLinearCloudAdjustTS$coefficients[[1]], color = 'H+ TD'),
               size = 2, show.legend = FALSE)+
   geom_abline(slope =1 , intercept = 0, linetype = 'dashed', size = 2)+
   annotate(geom = 'text',x = 560, y = 1750, size = 8,
            label = paste("y=",format(round(NonLinearCloudTS$coefficients[[2]], digits = 2), nsmall = 2),"x + ",round(NonLinearCloudTS$coefficients[[1]], digits = 1)),
-           color = "#00BFC4")+
+           color = "#00BFC4" )+
   annotate(geom = 'text',x = 575, y = 1550, size = 8,
            label = paste("y=",round(NonLinearCloudAdjustTS$coefficients[[2]], digits = 2),"x + ",round(NonLinearCloudAdjustTS$coefficients[[1]], digits = 1)),
-           color = "#F8766D")+
+           color ="#F8766D")+
   PaperQuality()+
   labs(title = 'c)',subtitle = "Non-Linear Regime",
        x = TeX('\\textbf{(SO$_4^{2-}$+NO$_3^{-}$) - NH$_4^+$ ($\\mu$eq L$^{-1}$)}'),
@@ -1155,15 +1159,27 @@ ggsave(filename = "Figure9.png", plot = EstimatedpHPlots,
        width = 12, height = 12)
 
 
+## Figure 10 Fractional Acidity from Organics ####
 
+FractionalAcidityPlot<-AllCloudData%>%
+  mutate(FractionAcidity = (CA+MG+1e6*10^(-LABPH)-SO4-NO3+NH4)/(CA+MG+1e6*10^(-LABPH)))%>%
+  group_by(Year)%>%
+  summarise(across(where(is.numeric), median, na.rm = TRUE))%>%
+  ggplot()+
+  geom_line(aes(x = Year, y = 100*FractionAcidity), color = 'red', size = 4)+
+  geom_point(aes(x = Year, y = 100*FractionAcidity), fill = 'red', color = 'black', size =4, shape = 21)+
+  PaperQuality()+scale_x_continuous(breaks = seq(1995, 2020, 5))+
+  scale_y_continuous(name =TeX('\\textbf{Percent of H^+ Missing (%)}'))
 
-## Figure 10 Drop pH and Measured pH vs LWC####
+ggsave(filename = 'Figure10.png', plot = FractionalAcidityPlot, width = 7, height =5)
+
+## Figure 11 TD pH and Measured pH vs LWC####
 
 LWCSO4PlotInferrred<-ggplot(AllCloudData)+
   geom_point(aes(x = LWC, y = InferredpH, color = SO4), size = 3)+
   scale_color_gradientn(colors = rev(rainbow(6)),  trans= 'log10')+
   PaperQuality()+labs(x  = TeX("\\textbf{LWC (g m$^{-3}$)}"),
-                      y = TeX("\\textbf{pH_{Drop}}"),
+                      y = TeX("\\textbf{pH_{TD}}"),
                       color = TeX('\\textbf{SO$_4^{2-}$ ($\\mu$eq L^{-1})}'))+xlim(c(0.05, 1.5))+
   theme(legend.position = 'right', legend.title = element_text(size =14))+
   ylim(c(2,7))
@@ -1184,34 +1200,34 @@ LWCvsPH<-grid.arrange(LWCSO4PlotInferrred, LWCSO4PlotMeasured)
 
 ggsave("FigureS11.png", plot = LWCvsPH,  width = 8, height = 8)
 
-## Figure 10 TOC vs DropH
+## Figure 10 TOC vs TDpH
 
 TOCvsMeasuredpH<-ggplot(AllCloudData%>%
                           filter(Year > 2008))+
   geom_point(aes(x = LABPH, y = TOC, color = Year), size = 3)+
   scale_color_gradientn(colors = rev(rainbow(6)))+
   PaperQuality()+labs(y  = TeX("\\textbf{NH$_4^+$ ($\\mu$mol L$^{-}$)}"),
-                      x = TeX("\\textbf{pH_{Drop}}"),
+                      x = TeX("\\textbf{pH_{TD}}"),
                       color = TeX('\\textbf{Year}}'))+
   theme(legend.position = 'right', legend.title = element_text())
 
 
 
-TOCvsDroppH<-ggplot(AllCloudData%>%
+TOCvsTDpH<-ggplot(AllCloudData%>%
                       filter(Year > 2008))+
   geom_point(aes(x = InferredpH, y = TOC, color = Year), size = 3)+
   scale_color_gradientn(colors = rev(rainbow(6)))+
   PaperQuality()+labs(y  = TeX("\\textbf{NH$_4^+$ ($\\mu$mol L$^{-}$)}"),
-                      x = TeX("\\textbf{pH_{Drop}}"),
+                      x = TeX("\\textbf{pH_{TD}}"),
                       color = TeX('\\textbf{Year}}'))+
   theme(legend.position = 'right', legend.title = element_text())
 
 
-TOCpHPlot<-grid.arrange(TOCvsMeasuredpH, TOCvsDroppH)
+TOCpHPlot<-grid.arrange(TOCvsMeasuredpH, TOCvsTDpH)
 
 ggsave(TOCpHPlot, file ='Figure10.png', width = 14, height = 8)
 
-## Figure S11 NH4 and NO3 Drop pH ####
+## Figure S11 NH4 and NO3 TD pH ####
 
 NH4vsMeasuredpH<-ggplot(AllCloudData)+
   geom_point(aes(x = LABPH, y = NH4, color = Year), size = 3)+
@@ -1235,29 +1251,29 @@ NO3vsMeasuredpH<-ggplot(AllCloudData)+
 
 
 
-NH4vsDroppH<-ggplot(AllCloudData)+
+NH4vsTDpH<-ggplot(AllCloudData)+
   geom_point(aes(x = InferredpH, y = NH4, color = Year), size = 3)+
   scale_color_gradientn(colors = rev(rainbow(6)))+
   PaperQuality()+labs(y  = TeX("\\textbf{NH$_4^+$ ($\\mu$mol L$^{-}$)}"),
-                      x = TeX("\\textbf{pH_{Drop}}"),
+                      x = TeX("\\textbf{pH_{TD}}"),
                       color = TeX('\\textbf{Year}}'))+
   theme(legend.position = 'right', legend.title = element_text())+
   labs(title = "c)",
-       subtitle = TeX('\\textbf{NH$_4^+$ vs Drop pH}'))
+       subtitle = TeX('\\textbf{NH$_4^+$ vs Inferred Cloud Droplet pH}'))
 
-NO3vsDroppH<-ggplot(AllCloudData)+
+NO3vsTDpH<-ggplot(AllCloudData)+
   geom_point(aes(x = InferredpH, y = NO3, color = Year), size = 3)+
   scale_color_gradientn(colors = rev(rainbow(6)))+
   PaperQuality()+labs(y  = TeX("\\textbf{NO$_3^-$ ($\\mu$mol L$^{-}$)}"),
-                      x = TeX("\\textbf{pH_{Drop}}"),
+                      x = TeX("\\textbf{pH_{TD}}"),
                       color = TeX('\\textbf{Year}}'))+
   theme(legend.position = 'right', legend.title = element_text())+
   labs(title = "d)",
-       subtitle = TeX('\\textbf{NO$_3^-$ vs Drop pH}'))
+       subtitle = TeX('\\textbf{NO$_3^-$ vs Inferred Cloud Droplet pH}'))
 
-DroppHConcentrations<-grid.arrange(NH4vsMeasuredpH, NO3vsMeasuredpH,NH4vsDroppH, NO3vsDroppH, ncol = 2)
+TDpHConcentrations<-grid.arrange(NH4vsMeasuredpH, NO3vsMeasuredpH,NH4vsTDpH, NO3vsTDpH, ncol = 2)
 
-ggsave(DroppHConcentrations, file ='FigureS11.png', width = 14, height = 8)
+ggsave(TDpHConcentrations, file ='FigureS11.png', width = 14, height = 8)
 
 
 
