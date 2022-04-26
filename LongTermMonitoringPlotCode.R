@@ -1227,7 +1227,7 @@ TOCpHPlot<-grid.arrange(TOCvsMeasuredpH, TOCvsTDpH)
 
 ggsave(TOCpHPlot, file ='Figure10.png', width = 14, height = 8)
 
-## Figure S11 NH4 and NO3 TD pH ####
+## Figure S12 NH4 and NO3 TD pH ####
 
 NH4vsMeasuredpH<-ggplot(AllCloudData)+
   geom_point(aes(x = LABPH, y = NH4, color = Year), size = 3)+
